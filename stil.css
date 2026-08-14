@@ -49,6 +49,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .gb:disabled{background:#888;cursor:not-allowed}
 .gb.ok{background:#2e7d32}
 
+/* Seçili barın adı (bar başlığı) */
+.outlet-ad{background:rgba(255,255,255,.15);color:#fff;padding:9px 14px;border-radius:8px;
+           font-size:15px;font-weight:700;white-space:nowrap;flex:1;min-width:180px}
+
+/* Bar kodu giriş kutusu — kod kısa, iri ve okunaklı olsun */
+#kod{font-size:26px;font-weight:700;letter-spacing:5px;padding:14px}
+
 /* Gönderim durumu rozeti (bar) */
 .dz{font-size:12px;padding:5px 12px;border-radius:14px;font-weight:700;white-space:nowrap}
 .dz.yok{background:rgba(255,255,255,.15);color:#dbe6f0}

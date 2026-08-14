@@ -8,18 +8,30 @@
 </head>
 <body>
 
+<!-- ===== Kod giriş ekranı ===== -->
+<div class="kilit" id="kilit">
+  <h2>🍹 BAR SİPARİŞ GİRİŞİ</h2>
+  <p>Bar kodunuzu girin</p>
+  <input type="text" id="kod" placeholder="örn. 315" inputmode="numeric" autocomplete="off" maxlength="6">
+  <button id="girisBtn" onclick="girisYap()">Devam</button>
+  <div class="err" id="kodHata"></div>
+</div>
+
+<!-- ===== Ana ekran ===== -->
+<div id="ana" style="display:none">
 <div class="hdr">
   <h1>BAR SİPARİŞ GİRİŞİ</h1>
   <div class="hr">
-    <select id="sel"><option value="">— Outlet Seçin —</option></select>
-    <span class="dz yok" id="durum">Outlet seçilmedi</span>
+    <span class="outlet-ad" id="outletAd">—</span>
+    <button class="cb" style="display:inline-block;width:auto;margin:0;padding:8px 14px" onclick="barDegistir()">↔ Bar Değiştir</button>
+    <span class="dz yok" id="durum">—</span>
     <button class="db" id="dlb" disabled onclick="dlExcel()">⬇ Excel</button>
     <button class="gb" id="gb" disabled onclick="gonder()">📤 Siparişi Gönder</button>
   </div>
 </div>
 
 <div class="mn">
-  <div class="lp" id="lp"><div class="em">Yukarıdan bir outlet seçin</div></div>
+  <div class="lp" id="lp"><div class="em">Yükleniyor...</div></div>
   <div class="sp">
     <div class="st">ÖZET RAPOR</div>
     <div class="sc">Kalem: <span id="cnt">0</span></div>
@@ -29,6 +41,7 @@
     </table>
     <button class="cb" onclick="clr()">Tümünü Temizle</button>
   </div>
+</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -44,22 +57,72 @@ let C = null;    // seçili outlet
 let sunucuTs = 0;   // seçili outlet'in sunucudaki son gönderim zamanı (ms)
 let kirli = false;  // gönderilmemiş değişiklik var mı
 
-const sel = document.getElementById("sel");
-D.forEach(o => {
-  const p = document.createElement("option");
-  p.value = o.c;
-  p.textContent = o.c + "  —  " + o.n;
-  sel.appendChild(p);
-});
+/* ================= Bar kodu ile giriş =================
+   Kod, outlet kodunun son üç hanesidir: CSM315 → 315, CSM201 → 201.
+   22 outlet'in üç haneli kodları birbirinden farklı olduğu için tekil eşleşir.
 
-sel.onchange = async function () {
-  C = D.find(o => o.c === this.value) || null;
-  if (!C) { Q = {}; rl(); us(); durum("yok", "Outlet seçilmedi"); return; }
+   Bu bir kilit DEĞİLDİR — kodlar tahmin edilebilir. Amacı personeli doğru
+   outlet'e yönlendirmek ve açılır menüden yanlış bar seçilmesini önlemek. */
+
+function outletByKod(girilen) {
+  const t = String(girilen || "").trim().toUpperCase().replace(/[^0-9A-Z]/g, "");
+  if (!t) return null;
+  return D.find(o => o.c === t || o.c === "CSM" + t || o.c.slice(3) === t) || null;
+}
+
+const kodInput = document.getElementById("kod");
+kodInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
+
+async function girisYap() {
+  const err = document.getElementById("kodHata");
+  const o = outletByKod(kodInput.value);
+
+  if (!o) {
+    err.textContent = "Bu kodla bir bar bulunamadı. Örnek: 315";
+    kodInput.select();
+    return;
+  }
+
+  err.textContent = "";
+  sessionStorage.setItem("gurok_bar_kod", o.c);
+  await barAc(o);
+}
+
+async function barAc(o) {
+  C = o;
   if (!Q[C.c]) Q[C.c] = {};
+
+  document.getElementById("kilit").style.display = "none";
+  document.getElementById("ana").style.display = "";
+  document.getElementById("outletAd").textContent = C.c.slice(3) + " — " + C.n;
+
   await yukle();
   rl();
   us();
-};
+}
+
+function barDegistir() {
+  if (kirli && !confirm("Gönderilmemiş değişikliğiniz var. Yine de bar değiştirilsin mi?\n\n(Girdikleriniz bu cihazda taslak olarak saklanır.)")) {
+    return;
+  }
+  sessionStorage.removeItem("gurok_bar_kod");
+  C = null;
+  kirli = false;
+  document.getElementById("ana").style.display = "none";
+  document.getElementById("kilit").style.display = "";
+  kodInput.value = "";
+  document.getElementById("kodHata").textContent = "";
+  kodInput.focus();
+}
+
+// Sekme oturumunda kayıtlı kod varsa tekrar sorma (sekme kapanınca silinir)
+const kayitliKod = sessionStorage.getItem("gurok_bar_kod");
+if (kayitliKod) {
+  const o = outletByKod(kayitliKod);
+  if (o) barAc(o);
+} else {
+  kodInput.focus();
+}
 
 /* ================= Taslak (yerel) =================
    3408 kalemlik listede 40 kalem girip telefon kilitlenirse emek gitmesin diye
@@ -142,7 +205,7 @@ function durum(sinif, metin) {
 
 function rl() {
   const p = document.getElementById("lp");
-  if (!C) { p.innerHTML = '<div class="em">Yukarıdan bir outlet seçin</div>'; return; }
+  if (!C) { p.innerHTML = '<div class="em">Bar kodunuzu girin</div>'; return; }
 
   let h = '<input class="sb" placeholder="Ürün ara..." oninput="fi(this.value)">'
         + '<div class="ib"><span>' + htmlEsc(C.c) + ' — ' + htmlEsc(C.n) + '</span>'

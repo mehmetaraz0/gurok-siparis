@@ -7,8 +7,31 @@ gönderir, depo hepsini tek ekranda toplu görür. İki sayfa Supabase üzerinde
 
 | Sayfa | Kim kullanır | Ne yapar |
 |---|---|---|
-| `bar.html` | Bar / restoran personeli | Outlet seçer, miktar girer, **Siparişi Gönder** |
+| `bar.html` | Bar / restoran personeli | **Bar kodunu girer** (201, 315...), miktar girer, **Siparişi Gönder** |
 | `depo.html` | Depo sorumlusu | Şifreyle girer, tüm siparişleri konsolide görür, Excel indirir |
+
+## Bar kodları
+
+Personel bar.html'i açtığında bu üç haneli kodu girer, kendi barının listesi gelir.
+
+| Kod | Bar | | Kod | Bar |
+|---|---|---|---|---|
+| **201** | ALIBEY RESTAURANT | | **308** | KARAGOZ |
+| **202** | PARK RESTAURANT | | **310** | ILICA BAR |
+| **204** | SAHIL RESTAURANT | | **311** | HARLEK |
+| **205** | AQUA RESTAURANT | | **312** | HISAR |
+| **206** | KIYI RESTAURANT | | **313** | YONCALI |
+| **301** | TURK KAHVESI | | **314** | FRIG BEACH BAR |
+| **302** | CARDAK | | **315** | PAVILLION BAR |
+| **303** | TALVAR | | **316** | LOBBY BAR |
+| **304** | POOL | | **317** | PARK TURK KAHVESI |
+| **305** | ALI'S PUB | | **318** | SARAP VE BIRA EVI |
+| **306** | TENIS BAR | | | |
+| **307** | KONAK | | | |
+
+`315`, `csm315`, `CSM315` yazımlarının hepsi kabul edilir. Kod sekme oturumunda tutulur:
+sayfa yenilenince tekrar sorulmaz, sekme kapanınca sorulur. Başlıktaki **↔ Bar Değiştir**
+ile koda dönülür.
 
 ## Dosyalar
 
@@ -61,14 +84,16 @@ gizli bir bilgi değildir. Korumayı veritabanı tarafı sağlar:
   - `depo_liste` — şifre doğruysa o günün tüm siparişlerini döner
 - Depo şifresi bcrypt ile saklanır, düz metin hiçbir yerde durmaz, doğrulama sunucuda yapılır.
 
-Bilinen ve kabul edilmiş sınır: **bar linki herkese açıktır.** Linki bilen biri sahte sipariş
-gönderebilir. Bar tarafı şifresiz istendiği için böyledir. Gerekirse `siparis_gonder`
-fonksiyonuna bar şifresi eklenebilir.
+Bilinen ve kabul edilmiş sınır: **bar kodu bir şifre değildir.** `201`, `315` gibi kodlar
+tahmin edilebilir ve doğrulama tarayıcıda yapılır — amacı personeli doğru outlet'e
+yönlendirmek, yanlış bara sipariş girilmesini önlemektir. Linki bilen biri sahte sipariş
+gönderebilir. Gerçek koruma isteniyorsa `siparis_gonder` fonksiyonuna sunucu tarafında
+doğrulanan bir bar şifresi eklenmelidir.
 
 ## Çalışma mantığı
 
 **Bar tarafı**
-- Outlet seçilince o günkü gönderilmiş sipariş varsa geri yüklenir → eksik eklenip yeniden gönderilir.
+- Kod girilince o günkü gönderilmiş sipariş varsa geri yüklenir → eksik eklenip yeniden gönderilir.
 - Her miktar girişi tarayıcıya taslak olarak yazılır. Telefon kilitlenir ya da sayfa yenilenirse
   girilen miktarlar kaybolmaz. Taslak sadece o güne aittir.
 - Aynı outlet aynı gün ikinci kez gönderirse **eski sipariş bu listeyle değiştirilir** (onay sorulur).
