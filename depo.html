@@ -31,8 +31,11 @@
   <!-- ---- Ekran 1: talep listesi ---- -->
   <div id="ekranListe" style="padding:12px">
     <div class="serit">
-      <div class="serit-ust"><b id="ozet">Yükleniyor...</b></div>
-      <div class="serit-alt" id="chipler"></div>
+      <div class="serit-ust">
+        <b id="ozet">Yükleniyor...</b>
+        <button class="bekle-btn" id="bekleBtn" onclick="bekleyenlerAcKapa()" style="display:none"></button>
+      </div>
+      <div class="serit-alt" id="chipler" style="display:none"></div>
     </div>
 
     <div class="sekmeler">
@@ -160,23 +163,41 @@ function sekmeGec(hangi) {
   document.getElementById("skKons").classList.toggle("aktif", !t);
 }
 
+// Hangi barın gönderdiği zaten talep listesinde görünüyor; burada sadece
+// GÖNDERMEYEN barlar var — ve o da katlanır, çünkü çoğu zaman gerekmez.
+let bekleyenlerAcik = false;
+
 function cizSerit() {
   const gelenler = new Set(SIPARISLER.map(s => s.outlet_kod));
   const onayli = SIPARISLER.filter(s => s.durum === "onaylandi").length;
+  const bekleyenler = D.filter(o => !gelenler.has(o.c));
 
   document.getElementById("ozet").textContent =
-    SIPARISLER.length + " sipariş — " + gelenler.size + " bar gönderdi, "
-    + onayli + " onaylandı, " + (SIPARISLER.length - onayli) + " bekliyor";
+    SIPARISLER.length + " sipariş · " + onayli + " onaylandı · "
+    + (SIPARISLER.length - onayli) + " onay bekliyor";
 
-  const saatler = {};
-  SIPARISLER.forEach(s => { saatler[s.outlet_kod] = saat(s.gonderilme_saati); });
+  const btn = document.getElementById("bekleBtn");
+  const kutu = document.getElementById("chipler");
 
-  document.getElementById("chipler").innerHTML = D.map(o => {
-    const geldi = gelenler.has(o.c);
-    const baslik = htmlEsc(o.n) + (geldi ? " — son " + saatler[o.c] : " — sipariş yok");
-    return '<span class="chip ' + (geldi ? "geldi" : "bekliyor") + '" title="' + baslik + '">'
-         + (geldi ? "✓ " : "") + htmlEsc(o.c.slice(3)) + '</span>';
-  }).join("");
+  if (!bekleyenler.length) {
+    btn.style.display = "none";
+    kutu.style.display = "none";
+    return;
+  }
+
+  btn.style.display = "";
+  btn.textContent = bekleyenler.length + " bar sipariş göndermedi "
+                  + (bekleyenlerAcik ? "▴" : "▾");
+
+  kutu.style.display = bekleyenlerAcik ? "" : "none";
+  kutu.innerHTML = bekleyenler.map(o =>
+    '<span class="chip bekliyor" title="' + htmlEsc(o.n) + '">'
+    + htmlEsc(o.c.slice(3)) + ' ' + htmlEsc(o.n) + '</span>').join("");
+}
+
+function bekleyenlerAcKapa() {
+  bekleyenlerAcik = !bekleyenlerAcik;
+  cizSerit();
 }
 
 function cizTalepler() {
