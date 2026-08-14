@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bar Sipariş Girişi — GUROK</title>
+<link rel="stylesheet" href="stil.css">
+</head>
+<body>
+
+<div class="hdr">
+  <h1>BAR SİPARİŞ GİRİŞİ</h1>
+  <div class="hr">
+    <select id="sel"><option value="">— Outlet Seçin —</option></select>
+    <span class="dz yok" id="durum">Outlet seçilmedi</span>
+    <button class="db" id="dlb" disabled onclick="dlExcel()">⬇ Excel</button>
+    <button class="gb" id="gb" disabled onclick="gonder()">📤 Siparişi Gönder</button>
+  </div>
+</div>
+
+<div class="mn">
+  <div class="lp" id="lp"><div class="em">Yukarıdan bir outlet seçin</div></div>
+  <div class="sp">
+    <div class="st">ÖZET RAPOR</div>
+    <div class="sc">Kalem: <span id="cnt">0</span></div>
+    <table class="tb">
+      <thead><tr><th>KOD</th><th>AD</th><th>MİKTAR</th><th>BİRİM</th></tr></thead>
+      <tbody id="stb"></tbody>
+    </table>
+    <button class="cb" onclick="clr()">Tümünü Temizle</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="veri.js"></script>
+<script src="config.js"></script>
+<script src="ortak.js"></script>
+<script>
+/* ================= Durum ================= */
+
+let Q = {};      // outletKod -> {kalemKod: miktar}
+let C = null;    // seçili outlet
+let sunucuTs = 0;   // seçili outlet'in sunucudaki son gönderim zamanı (ms)
+let kirli = false;  // gönderilmemiş değişiklik var mı
+
+const sel = document.getElementById("sel");
+D.forEach(o => {
+  const p = document.createElement("option");
+  p.value = o.c;
+  p.textContent = o.c + "  —  " + o.n;
+  sel.appendChild(p);
+});
+
+sel.onchange = async function () {
+  C = D.find(o => o.c === this.value) || null;
+  if (!C) { Q = {}; rl(); us(); durum("yok", "Outlet seçilmedi"); return; }
+  if (!Q[C.c]) Q[C.c] = {};
+  await yukle();
+  rl();
+  us();
+};
+
+/* ================= Taslak (yerel) =================
+   3408 kalemlik listede 40 kalem girip telefon kilitlenirse emek gitmesin diye
+   her değişiklik tarayıcıya yazılır. Sunucudaki gönderim daha yeniyse o kazanır. */
+
+function taslakAnahtar(kod) { return "gurok_taslak_" + kod; }
+
+function taslakYaz() {
+  if (!C) return;
+  try {
+    localStorage.setItem(taslakAnahtar(C.c), JSON.stringify({
+      tarih: bugun(), ts: Date.now(), q: Q[C.c] || {}
+    }));
+  } catch (e) { /* depolama dolu/kapalı — akışı bozmaz */ }
+}
+
+function taslakOku(kod) {
+  try {
+    const t = JSON.parse(localStorage.getItem(taslakAnahtar(kod)) || "null");
+    return (t && t.tarih === bugun()) ? t : null;   // dünün taslağı kullanılmaz
+  } catch (e) { return null; }
+}
+
+function taslakSil(kod) {
+  try { localStorage.removeItem(taslakAnahtar(kod)); } catch (e) {}
+}
+
+/* ================= Sunucudan yükleme ================= */
+
+async function yukle() {
+  durum("yok", "⏳ Yükleniyor...");
+  Q[C.c] = {};
+  sunucuTs = 0;
+  kirli = false;
+
+  let gonderilen = null;
+  try {
+    const { data, error } = await SB.rpc("siparis_getir", { p_outlet_kod: C.c });
+    if (error) throw error;
+    gonderilen = data;
+  } catch (e) {
+    console.error(e);
+    const t = taslakOku(C.c);
+    if (t) { Q[C.c] = t.q; kirli = true; }
+    durum("hata", "⚠ Sunucuya ulaşılamadı — çevrimdışı çalışıyorsunuz");
+    return;
+  }
+
+  const taslak = taslakOku(C.c);
+
+  if (gonderilen) {
+    sunucuTs = gonderilen.ts;
+    gonderilen.kalemler.forEach(it => { Q[C.c][it.k] = it.m; });
+
+    // Gönderimden SONRA yapılmış yerel değişiklik varsa o kazanır
+    if (taslak && taslak.ts > sunucuTs) {
+      Q[C.c] = taslak.q;
+      kirli = true;
+      durum("hata", "⚠ Gönderilmemiş değişikliğiniz var");
+    } else {
+      taslakSil(C.c);
+      durum("var", "✓ " + gonderilen.saat + "'de gönderildi (" + gonderilen.kalemler.length + " kalem)");
+    }
+  } else if (taslak) {
+    Q[C.c] = taslak.q;
+    kirli = true;
+    durum("hata", "⚠ Kaydedilmiş taslak — henüz gönderilmedi");
+  } else {
+    durum("yok", "Bugün sipariş gönderilmedi");
+  }
+}
+
+function durum(sinif, metin) {
+  const d = document.getElementById("durum");
+  d.className = "dz " + sinif;
+  d.textContent = metin;
+}
+
+/* ================= Liste render ================= */
+
+function rl() {
+  const p = document.getElementById("lp");
+  if (!C) { p.innerHTML = '<div class="em">Yukarıdan bir outlet seçin</div>'; return; }
+
+  let h = '<input class="sb" placeholder="Ürün ara..." oninput="fi(this.value)">'
+        + '<div class="ib"><span>' + htmlEsc(C.c) + ' — ' + htmlEsc(C.n) + '</span>'
+        + '<span class="bg">' + C.i.length + ' kalem</span></div>';
+
+  let g = "";
+  C.i.forEach(i => {
+    if (i.g !== g) { g = i.g; h += '<div class="gh ' + grupSinifi(i.g) + '">' + htmlEsc(i.g) + '</div>'; }
+    const q = Q[C.c]?.[i.k] || "";
+    h += '<div class="ir' + (q ? " hq" : "") + '"'
+       + ' data-n="' + htmlEsc(i.a.toLowerCase()) + '" data-c="' + htmlEsc(i.k.toLowerCase()) + '">'
+       + '<span class="ic">' + htmlEsc(i.k) + '</span>'
+       + '<span class="in">' + htmlEsc(i.a) + '</span>'
+       + '<span class="iu">' + htmlEsc(i.b) + '</span>'
+       + '<span class="iq"><input type="number" min="0" value="' + (q || "") + '"'
+       + ' class="' + (q ? "fl" : "") + '" data-k="' + htmlEsc(i.k) + '"'
+       + ' onchange="sq(this)" onfocus="this.select()"></span></div>';
+  });
+  p.innerHTML = h;
+}
+
+function fi(t) {
+  t = t.toLowerCase();
+  document.querySelectorAll(".ir").forEach(r => {
+    r.style.display = (r.dataset.n.includes(t) || r.dataset.c.includes(t)) ? "" : "none";
+  });
+  document.querySelectorAll(".gh").forEach(g => {
+    let n = g.nextElementSibling, v = false;
+    while (n && !n.classList.contains("gh")) {
+      if (n.style.display !== "none") v = true;
+      n = n.nextElementSibling;
+    }
+    g.style.display = v ? "" : "none";
+  });
+}
+
+function sq(inp) {
+  const k = inp.dataset.k, v = parseInt(inp.value) || 0;
+  if (!Q[C.c]) Q[C.c] = {};
+  if (v > 0) {
+    Q[C.c][k] = v;
+    inp.classList.add("fl");
+    inp.closest(".ir").classList.add("hq");
+  } else {
+    delete Q[C.c][k];
+    inp.classList.remove("fl");
+    inp.closest(".ir").classList.remove("hq");
+    inp.value = "";
+  }
+  kirli = true;
+  taslakYaz();
+  us();
+}
+
+function us() {
+  const tb = document.getElementById("stb"),
+        ct = document.getElementById("cnt"),
+        b  = document.getElementById("dlb"),
+        g  = document.getElementById("gb");
+
+  if (!C) { tb.innerHTML = ""; ct.textContent = "0"; b.disabled = true; g.disabled = true; return; }
+
+  const q = Q[C.c] || {}, items = C.i.filter(i => q[i.k]);
+  ct.textContent = items.length;
+  b.disabled = items.length === 0;
+  g.disabled = items.length === 0;
+  tb.innerHTML = items.map(i =>
+    '<tr><td style="font-family:monospace;font-size:10px">' + htmlEsc(i.k) + '</td>'
+    + '<td>' + htmlEsc(i.a) + '</td>'
+    + '<td style="text-align:center;font-weight:700">' + q[i.k] + '</td>'
+    + '<td style="text-align:center">' + htmlEsc(i.b) + '</td></tr>').join("");
+}
+
+function clr() {
+  if (!C) return;
+  if (!confirm("Bu outlet için girilen tüm miktarlar silinecek. Emin misiniz?")) return;
+  Q[C.c] = {};
+  kirli = true;
+  taslakYaz();
+  rl();
+  us();
+}
+
+/* ================= Sipariş gönderimi ================= */
+
+function seciliKalemler() {
+  const q = Q[C.c] || {};
+  return C.i.filter(i => q[i.k]).map(i => ({ k: i.k, a: i.a, b: i.b, g: i.g, m: q[i.k] }));
+}
+
+async function gonder() {
+  if (!C) return;
+  const kalemler = seciliKalemler();
+  if (!kalemler.length) return;
+
+  if (sunucuTs > 0 &&
+      !confirm("Bu outlet bugün zaten sipariş göndermiş.\n\nDevam ederseniz eski sipariş bu listeyle DEĞİŞTİRİLİR.\n\nGönderilsin mi?")) {
+    return;
+  }
+
+  const b = document.getElementById("gb");
+  b.disabled = true;
+  b.textContent = "⏳ Gönderiliyor...";
+
+  try {
+    const { data, error } = await SB.rpc("siparis_gonder", {
+      p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler
+    });
+    if (error) throw error;
+
+    sunucuTs = data.ts;
+    kirli = false;
+    taslakSil(C.c);
+
+    b.textContent = "✅ Gönderildi";
+    b.classList.add("ok");
+    durum("var", "✓ " + data.saat + "'de gönderildi (" + kalemler.length + " kalem)");
+    setTimeout(() => {
+      b.textContent = "📤 Siparişi Gönder";
+      b.classList.remove("ok");
+      b.disabled = false;
+    }, 2500);
+
+  } catch (e) {
+    console.error(e);
+    b.textContent = "❌ Gönderilemedi";
+    durum("hata", "⚠ Gönderilemedi — internet bağlantınızı kontrol edin");
+    setTimeout(() => { b.textContent = "📤 Siparişi Gönder"; b.disabled = false; }, 2500);
+  }
+}
+
+/* ================= Excel ================= */
+
+async function dlExcel() {
+  if (!C) return;
+  const kalemler = seciliKalemler();
+  if (!kalemler.length) return;
+
+  const b = document.getElementById("dlb");
+  b.textContent = "⏳";
+  b.disabled = true;
+  try {
+    await indirExcel(C.c, C.n, kalemler);
+    b.textContent = "✅";
+    b.classList.add("ok");
+  } catch (e) {
+    console.error(e);
+    b.textContent = "❌";
+  }
+  setTimeout(() => { b.textContent = "⬇ Excel"; b.classList.remove("ok"); b.disabled = false; }, 2000);
+}
+
+/* Gönderilmemiş değişiklikle sayfadan çıkışta uyar */
+window.addEventListener("beforeunload", e => {
+  if (kirli) { e.preventDefault(); e.returnValue = ""; }
+});
+</script>
+</body>
+</html>

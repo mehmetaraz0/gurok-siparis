@@ -1,0 +1,81 @@
+/* stil.css - GUROK SIPARIS ortak stiller (kaynak: siparis_sistemi.html v11b) */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f5f6fa;color:#333}
+.hdr{background:linear-gradient(135deg,#1e3a5f,#2d5f8a);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.hdr h1{font-size:17px;font-weight:700;margin-bottom:8px}
+.hr{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hdr select{flex:1;min-width:200px;padding:10px;font-size:14px;border:none;border-radius:8px}
+.db{padding:10px 20px;background:#c00000;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
+.db:hover{background:#a00000}.db:disabled{background:#888;cursor:not-allowed}.db.ok{background:#2e7d32}
+.mn{display:flex;min-height:calc(100vh - 90px)}
+.lp{flex:1;padding:10px;overflow-y:auto;max-height:calc(100vh - 90px)}
+.sp{width:360px;min-width:300px;background:#fff;border-left:3px solid #c00000;padding:14px;overflow-y:auto;max-height:calc(100vh - 90px);position:sticky;top:90px}
+.gh{padding:7px 12px;font-size:12px;font-weight:700;border-radius:5px;margin:6px 0 3px;letter-spacing:.3px;color:#fff}
+.g0{background:#2e75b6}.g1{background:#843c0c}.g2{background:#548235}.g3{background:#7030a0}.g4{background:#1f6e6e}.g5{background:#a6611a}.g6{background:#bf8f00}.g7{background:#c55a11}.gd{background:#666}
+.ir{display:flex;align-items:center;padding:5px 8px;background:#fff;border-bottom:1px solid #f0f0f0;border-radius:3px;margin:1px 0}
+.ir.hq{background:#fff9e6}
+.ic{width:105px;font-size:10px;color:#999;font-family:monospace;flex-shrink:0}
+.in{flex:1;font-size:12px;padding:0 6px}
+.iu{width:35px;font-size:10px;color:#777;text-align:center;flex-shrink:0}
+.iq input{width:52px;padding:5px 3px;text-align:center;border:2px solid #ddd;border-radius:5px;font-size:13px;font-weight:700;background:#fffde7}
+.iq input:focus{border-color:#2e75b6;outline:none}.iq input.fl{border-color:#e6a800;background:#fff8d6}
+.st{color:#c00000;font-size:15px;font-weight:700;border-bottom:2px solid #c00000;padding-bottom:5px;margin-bottom:3px}
+.sc{font-size:12px;color:#666;margin-bottom:10px}.sc span{color:#c00000;font-weight:700;font-size:15px}
+.tb{width:100%;border-collapse:collapse;font-size:11px}
+.tb th{background:#c00000;color:#fff;padding:4px 6px;text-align:left;font-size:10px;position:sticky;top:0}
+.tb td{padding:4px 6px;border-bottom:1px solid #f0f0f0}
+.cb{display:block;width:100%;margin-top:8px;padding:8px;background:#fff;color:#999;border:1px solid #ddd;border-radius:6px;font-size:12px;cursor:pointer}
+.sb{width:100%;padding:8px 10px;border:2px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:6px}.sb:focus{border-color:#2e75b6;outline:none}
+.ib{display:flex;justify-content:space-between;padding:4px 0;font-size:12px;color:#666}
+.bg{background:#e8f0fe;color:#1e3a5f;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.em{text-align:center;color:#bbb;padding:40px;font-size:13px}
+.tb2{padding:10px 16px;background:#1a6b3c;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
+.tb2:hover{background:#14532d}.tb2.active{background:#f59e0b;color:#333}
+.depo-panel{display:none;padding:16px;overflow-y:auto}
+.depo-panel.show{display:block}
+.depo-header{background:#1a1a1a;color:#fff;padding:10px 14px;font-size:15px;font-weight:700;border-radius:6px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.depo-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.depo-tbl th{background:#1a1a1a;color:#fff;padding:6px 8px;text-align:left;font-size:11px;position:sticky;top:0}
+.depo-tbl td{padding:5px 8px;border-bottom:1px solid #eee}
+.depo-tbl tr:hover{background:#f0f7ff}
+.depo-tbl .outlet-cell{font-size:10px;color:#666}
+.depo-grp{background:#305496;color:#fff;padding:6px 12px;font-size:12px;font-weight:700;border-radius:4px;margin:8px 0 4px}
+.depo-count{background:#c00000;color:#fff;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700}
+/* ===== Bulut sürümü için eklenenler ===== */
+
+/* Gönder butonu */
+.gb{padding:10px 20px;background:#1a6b3c;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
+.gb:hover{background:#14532d}
+.gb:disabled{background:#888;cursor:not-allowed}
+.gb.ok{background:#2e7d32}
+
+/* Gönderim durumu rozeti (bar) */
+.dz{font-size:12px;padding:5px 12px;border-radius:14px;font-weight:700;white-space:nowrap}
+.dz.yok{background:rgba(255,255,255,.15);color:#dbe6f0}
+.dz.var{background:#2e7d32;color:#fff}
+.dz.hata{background:#c00000;color:#fff}
+
+/* Depo şifre ekranı */
+.kilit{max-width:380px;margin:80px auto;background:#fff;padding:28px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.12);text-align:center}
+.kilit h2{font-size:18px;color:#1e3a5f;margin-bottom:6px}
+.kilit p{font-size:13px;color:#777;margin-bottom:18px}
+.kilit input{width:100%;padding:12px;font-size:16px;border:2px solid #ddd;border-radius:8px;text-align:center;margin-bottom:12px}
+.kilit input:focus{border-color:#2e75b6;outline:none}
+.kilit button{width:100%;padding:12px;background:#1e3a5f;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer}
+.kilit button:disabled{background:#888;cursor:not-allowed}
+.kilit .err{color:#c00000;font-size:13px;font-weight:600;min-height:18px;margin-top:10px}
+
+/* Depo durum şeridi */
+.serit{background:#fff;border-radius:8px;padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.serit-ust{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.serit-ust b{font-size:15px;color:#1e3a5f}
+.serit-alt{display:flex;flex-wrap:wrap;gap:5px}
+.chip{font-size:10px;padding:4px 9px;border-radius:11px;font-family:monospace;font-weight:700}
+.chip.geldi{background:#e3f5e8;color:#1a6b3c;border:1px solid #a8d5b8}
+.chip.bekliyor{background:#f4f4f4;color:#999;border:1px solid #e0e0e0}
+.serit input[type=date]{padding:8px 10px;border:2px solid #ddd;border-radius:7px;font-size:13px}
+.canli{font-size:11px;color:#888;display:flex;align-items:center;gap:5px}
+.canli i{width:7px;height:7px;border-radius:50%;background:#2e7d32;display:inline-block;animation:yanip 2s infinite}
+@keyframes yanip{0%,100%{opacity:1}50%{opacity:.25}}
+
+@media(max-width:768px){.mn{flex-direction:column}.sp{width:100%;min-width:auto;border-left:none;border-top:3px solid #c00000;max-height:none;position:relative;top:0}.lp{max-height:none}.ic{width:80px;font-size:9px}}

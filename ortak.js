@@ -1,0 +1,114 @@
+// ortak.js — bar.html ve depo.html'in PAYLAŞTIĞI mantık.
+//
+// Excel üretimi burada TEK bir yerde durur. Eski tek-dosya sürümde aynı kurgu
+// dlExcel() ve dlAllExcel() içinde iki ayrı kopya halindeydi; biri değişince
+// çıktılar sessizce ayrışabiliyordu. Artık bar da depo da aynı fonksiyonu
+// çağırdığı için üretilen xlsx birebir aynıdır.
+
+/* ---------- Supabase ---------- */
+
+const SB = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+/* ---------- Yardımcılar ---------- */
+
+// XML'e yazılacak metni kaçışlar.
+// Katalogda & içeren 33 ürün var (ICE TEA MANGO&ANANAS, CHIWAS SMOOTH&SMOKY,
+// KOKTEYL MIX PETBUER&ALMON). Kaçışlanmazsa sheet1.xml bozulur ve Excel
+// dosyayı "onarılması gerekiyor" diyerek açmaz.
+function xmlEsc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// HTML'e basılacak metni kaçışlar.
+function htmlEsc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// Tarayıcı saat dilimine bakmaksızın Türkiye tarihi (YYYY-AA-GG).
+function bugun() {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Istanbul" });
+}
+
+function saat(ts) {
+  return new Date(ts).toLocaleTimeString("tr-TR", {
+    timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit"
+  });
+}
+
+/* ---------- Excel üretimi ---------- */
+
+// kalemler: [{k: kod, a: ad, b: birim, m: miktar}, ...]
+// Dönen değer: xlsx Blob'u
+async function buildExcelBlob(outletKod, outletAd, kalemler) {
+  const tplBytes = Uint8Array.from(atob(TPL_B64), c => c.charCodeAt(0));
+  const zip = await JSZip.loadAsync(tplBytes);
+  let sheet = await zip.file("xl/worksheets/sheet1.xml").async("string");
+
+  // Şablondaki örnek satırı çıkar
+  sheet = sheet.replace(/<row r="2">.*?<\/row>/s, "");
+
+  let newRows = "";
+  for (let i = 0; i < kalemler.length; i++) {
+    const it = kalemler[i];
+    const rn = i + 2;
+
+    let row = ROW2.replace(/r="2"/g, 'r="' + rn + '"');
+    row = row.replace(/r="([A-Z]{1,2})2"/g, 'r="$1' + rn + '"');
+
+    const hucre = (sut, icerik) => {
+      row = row.replace(new RegExp('<c r="' + sut + rn + '"[^>]*>.*?</c>'), icerik);
+    };
+
+    hucre("V",  '<c r="V'  + rn + '" t="inlineStr"><is><t>' + xmlEsc(outletKod) + '</t></is></c>');
+    hucre("W",  '<c r="W'  + rn + '" t="inlineStr"><is><t>' + xmlEsc(outletAd)  + '</t></is></c>');
+    hucre("AQ", '<c r="AQ' + rn + '" t="n" s="15"><v>' + (i + 1) + '</v></c>');
+    hucre("AS", '<c r="AS' + rn + '" t="n" s="15"><v>1</v></c>');
+    hucre("AU", '<c r="AU' + rn + '" t="inlineStr"><is><t>' + xmlEsc(it.k) + '</t></is></c>');
+    hucre("AV", '<c r="AV' + rn + '" t="inlineStr"><is><t>' + xmlEsc(it.a) + '</t></is></c>');
+    hucre("AW", '<c r="AW' + rn + '" t="n"><v>' + it.m + '.0</v></c>');
+    hucre("AX", '<c r="AX' + rn + '" t="inlineStr"><is><t>' + xmlEsc(it.b) + '</t></is></c>');
+    hucre("AY", '<c r="AY' + rn + '" t="n"><v>' + it.m + '.0</v></c>');
+    hucre("AZ", '<c r="AZ' + rn + '" t="inlineStr"><is><t>' + xmlEsc(it.b) + '</t></is></c>');
+
+    newRows += row + "\n";
+  }
+
+  sheet = sheet.replace("</sheetData>", newRows + "</sheetData>");
+  sheet = sheet.replace(/dimension ref="[^"]*"/, 'dimension ref="A1:BI' + (kalemler.length + 1) + '"');
+  zip.file("xl/worksheets/sheet1.xml", sheet);
+
+  return await zip.generateAsync({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  });
+}
+
+// Excel'i üretip indirir. Dosya adı: siparis_CSM315_2026-08-14.xlsx
+async function indirExcel(outletKod, outletAd, kalemler, tarih) {
+  const blob = await buildExcelBlob(outletKod, outletAd, kalemler);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "siparis_" + outletKod + "_" + (tarih || bugun()) + ".xlsx";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ---------- Katalog yardımcıları ---------- */
+
+// Outlet kodundan outlet nesnesi
+function outletBul(kod) {
+  return D.find(o => o.c === kod) || null;
+}
+
+// Grup rengi sınıfı (g0..g7 / gd)
+function grupSinifi(g) {
+  return "g" + (GC[g] ?? "d");
+}
