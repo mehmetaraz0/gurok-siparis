@@ -181,9 +181,24 @@ function grupIndex(g) {
   return (g in GRUP_INDEX) ? GRUP_INDEX[g] : 9999;
 }
 
+/* ---------- Mutfak kategorileri ----------
+   Mutfak listelerinin kategorisi ürün kodundan türetilir (bkz. mutfak.js).
+   Bar grupları GC'den, mutfak kategorileri MUTFAK_KAT'tan sıralanır. */
+
+function mutfakKatIndex(g) {
+  return (typeof MUTFAK_KAT !== "undefined" && MUTFAK_KAT[g]) ? MUTFAK_KAT[g].s : 999;
+}
+
+function mutfakKatSinifi(g) {
+  const r = (typeof MUTFAK_KAT !== "undefined" && MUTFAK_KAT[g]) ? MUTFAK_KAT[g].r : 9;
+  return r === 9 ? "gd" : "g" + r;
+}
+
 // Kalemleri gruba göre öbekler. Dönen değer: [[grupAdı, [kalem, ...]], ...]
-// Her grup TEK blok; gruplar GRUP_INDEX sırasında, grup içi ürün adına göre.
-function grupla(kalemler) {
+// Her grup TEK blok; grup içi ürün adına göre. Sıralama ölçütü dışarıdan
+// verilebilir: bar listeleri grupIndex, mutfak listeleri mutfakKatIndex kullanır.
+function grupla(kalemler, indexFn) {
+  const idx = indexFn || grupIndex;
   const gruplar = new Map();
   kalemler.forEach(it => {
     const g = it.g || "DİĞER";
@@ -192,11 +207,11 @@ function grupla(kalemler) {
   });
 
   return [...gruplar.entries()]
-    .sort((a, b) => (grupIndex(a[0]) - grupIndex(b[0])) || a[0].localeCompare(b[0], "tr"))
+    .sort((a, b) => (idx(a[0]) - idx(b[0])) || a[0].localeCompare(b[0], "tr"))
     .map(([g, list]) => [g, list.slice().sort((x, y) => x.a.localeCompare(y.a, "tr"))]);
 }
 
 // Gruplanmış sırayla düz liste (Excel satır sırası da bu olur)
-function grupluSirala(kalemler) {
-  return grupla(kalemler).flatMap(([, list]) => list);
+function grupluSirala(kalemler, indexFn) {
+  return grupla(kalemler, indexFn).flatMap(([, list]) => list);
 }

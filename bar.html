@@ -289,13 +289,14 @@ function rl() {
         + '<div class="ib"><span>' + htmlEsc(C.c) + ' — ' + htmlEsc(C.n) + '</span>'
         + '<span class="bg">' + C.i.length + ' kalem</span></div>';
 
-  // Bar listelerinde her grup tek blok, sırası GRUP_INDEX'e göre (bkz. ortak.js).
-  // Mutfak listelerinde ürün grubu yok; Excel'deki sıra olduğu gibi korunur.
-  const bloklar = C.bl ? [[null, C.i]] : grupla(C.i);
+  // Her grup tek blok. Bar listeleri GC sırasına, mutfak listeleri kategori
+  // sırasına göre dizilir (bkz. ortak.js / mutfak.js).
+  const mutfakMi = !!C.bl;
+  const bloklar = mutfakMi ? grupla(C.i, mutfakKatIndex) : grupla(C.i);
 
   bloklar.forEach(([g, items]) => {
     if (g) {
-      h += '<div class="gh ' + grupSinifi(g) + '">' + htmlEsc(g)
+      h += '<div class="gh ' + (mutfakMi ? mutfakKatSinifi(g) : grupSinifi(g)) + '">' + htmlEsc(g)
          + ' <span class="gs">' + items.length + '</span></div>';
     }
     items.forEach(i => {
@@ -386,8 +387,8 @@ function seciliKalemler() {
   if (!C) return [];
   const q = Q[anahtar()] || {};
   const secilen = C.i.filter(i => q[i.k]);
-  // Mutfakta liste zaten Excel sırasında; barda grup sırasına dizilir.
-  return (C.bl ? secilen : grupluSirala(secilen))
+  // Ekranda hangi sırayla görünüyorsa Excel'e de o sırayla gider.
+  return grupluSirala(secilen, C.bl ? mutfakKatIndex : undefined)
     .map(i => ({ k: i.k, a: i.a, b: i.b, g: i.g, m: q[i.k] }));
 }
 
