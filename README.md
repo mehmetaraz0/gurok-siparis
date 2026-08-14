@@ -147,6 +147,7 @@ Talepler listesi 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş gün
 | `guncelleme-01.sql` | Sipariş no + depo düzeltme/onay — bir kez |
 | `guncelleme-02.sql` | Kalem envanteri (tarih aralığı sorgusu) — bir kez |
 | `guncelleme-03.sql` | Mutfaklar: CMM kodları + bölüm — bir kez |
+| `guncelleme-04.sql` | Güvenlik: kalem/miktar doğrulaması + çöp kayıt temizliği — bir kez |
 
 Excel üretimi `ortak.js` içinde tek `buildExcelBlob()` fonksiyonundadır. Eski tek dosyalık
 sürümde aynı kurgu iki ayrı kopya halindeydi; artık bar da depo da aynı kodu çağırır.
@@ -161,6 +162,7 @@ Supabase panelinde **SQL Editor → New query**, sırayla:
 2. `guncelleme-01.sql` → **Run**  *(şifreni değiştirmez, mevcut veriyi korur)*
 3. `guncelleme-02.sql` → **Run**  *(kalem envanteri için `depo_envanter` fonksiyonu)*
 4. `guncelleme-03.sql` → **Run**  *(mutfak kodları ve bölüm desteği)*
+5. `guncelleme-04.sql` → **Run**  *(girdi doğrulaması; test çöp kayıtlarını da temizler)*
 
 Şifreyi sonra değiştirmek için `kurulum.sql` içindeki `insert into public.ayarlar ...`
 satırını yeni şifreyle tekrar çalıştırman yeterli.
@@ -185,10 +187,19 @@ Korumayı veritabanı sağlar:
   - `depo_durum_degistir` — onaylar / kilidi açar
 - Depo şifresi bcrypt ile saklanır, doğrulama sunucuda yapılır.
 
-Bilinen ve kabul edilmiş sınır: **bar kodu bir şifre değildir.** `201`, `315` gibi kodlar
-tahmin edilebilir ve doğrulama tarayıcıda yapılır — amacı personeli doğru outlet'e
+Bilinen ve kabul edilmiş sınır: **bar/mutfak kodu bir şifre değildir.** `201`, `M201` gibi
+kodlar tahmin edilebilir ve doğrulama tarayıcıda yapılır — amacı personeli doğru birime
 yönlendirmektir. Gerçek koruma isteniyorsa `siparis_gonder` fonksiyonuna sunucu tarafında
-doğrulanan bir bar şifresi eklenmelidir.
+doğrulanan bir kod/şifre eklenmelidir.
+
+**Sızma testi (canlı sistemde yapıldı):** Doğrudan tablo erişimi (SELECT/INSERT/UPDATE/DELETE),
+şifre hash'i okuma, şifresiz onaylama, SQL injection ve API şeması listeleme denemelerinin
+**hepsi engellendi**. `guncelleme-04.sql` ile ayrıca girdi doğrulaması sıkılaştırıldı: artık
+negatif, sıfır, kesirli veya eksik miktarlı kalem kabul edilmiyor.
+
+**Supabase panelinde kapatılması önerilen:** Authentication → Providers → Email → *"Allow new
+users to sign up"* kapatılmalı. Sisteme kullanıcı hesabı gerekmiyor; açık kalması bir veri
+riski yaratmıyor (authenticated role'ün de tablo izni yok) ama gereksiz açık uçtur.
 
 ## Bar tarafı ayrıntılar
 
