@@ -2,17 +2,43 @@
 
 ALI BEY CLUB MANAVGAT — 22 outlet, 3.408 kalem, LN Infor Excel çıktısı.
 
-Eski tek dosyalık `siparis_sistemi.html` ikiye ayrıldı: barlar kendi ekranından sipariş
-gönderir, depo hepsini tek ekranda toplu görür. İki sayfa Supabase üzerinden birbirine bağlıdır.
+Barlar talep gönderir, depo düzeltip onaylar, Excel onaylanmış miktarlarla iner.
 
 | Sayfa | Kim kullanır | Ne yapar |
 |---|---|---|
-| `bar.html` | Bar / restoran personeli | **Bar kodunu girer** (201, 315...), miktar girer, **Siparişi Gönder** |
-| `depo.html` | Depo sorumlusu | Şifreyle girer, tüm siparişleri konsolide görür, Excel indirir |
+| `bar.html` | Bar / restoran personeli | Bar kodunu girer, miktar girer, **Siparişi Gönder** |
+| `depo.html` | Depo sorumlusu | Şifreyle girer, talepleri düzeltir, onaylar, Excel indirir |
+
+## Akış
+
+```
+BAR                          DEPO
+───                          ────
+kod gir (315)
+miktar gir
+Siparişi Gönder  ─────────►  talep listesinde belirir
+   ↓                              ↓  (tıkla)
+ekran sıfırlanır             sipariş detayı
+makbuz: SIP-...-007          miktarları düzelt (0 = verilmedi)
+                                  ↓
+                             ✅ ONAYLA → kilitlenir
+                                  ↓
+                             ⬇ Excel (onaylanmış miktarlarla)
+```
+
+**Sipariş numarası:** `SIP-20260814-007` — gün içinde sıralı, benzersiz.
+Bir bar günde istediği kadar sipariş gönderebilir; her biri ayrı numara alır.
+
+**Bar gönderince ekranı sıfırlanır.** Sipariş depoda kalır. Bar sadece o günkü
+gönderimlerinin makbuzunu görür (numara + saat + kalem sayısı).
+
+**Kilit yalnızca depoyu bağlar.** Onaylanan siparişte depo düzeltme yapamaz;
+**🔓 Kilidi Aç** ile geri alınır. Bar tarafı hiç etkilenmez, yeni sipariş gönderebilir.
+
+Barda Excel butonu yoktur — çıktıyı depo alır. Böylece düzeltilmemiş miktarların
+yanlışlıkla LN Infor'a yüklenmesi mümkün olmaz.
 
 ## Bar kodları
-
-Personel bar.html'i açtığında bu üç haneli kodu girer, kendi barının listesi gelir.
 
 | Kod | Bar | | Kod | Bar |
 |---|---|---|---|---|
@@ -29,83 +55,86 @@ Personel bar.html'i açtığında bu üç haneli kodu girer, kendi barının lis
 | **306** | TENIS BAR | | | |
 | **307** | KONAK | | | |
 
-`315`, `csm315`, `CSM315` yazımlarının hepsi kabul edilir. Kod sekme oturumunda tutulur:
-sayfa yenilenince tekrar sorulmaz, sekme kapanınca sorulur. Başlıktaki **↔ Bar Değiştir**
-ile koda dönülür.
+`315`, `csm315`, `CSM315` yazımlarının hepsi kabul edilir. Kod sekme oturumunda tutulur;
+sayfa yenilenince sorulmaz, sekme kapanınca sorulur. **↔ Bar Değiştir** ile koda dönülür.
+
+## Depo ekranı
+
+**📋 TALEPLER** — gelen siparişler alt alta, her satır bir sipariş:
+
+| SİPARİŞ NO | BAR | SAAT | KALEM | DURUM |
+|---|---|---|---|---|
+| SIP-20260814-007 | 315 PAVILLION BAR | 14:32 | 12 kalem · *2 düzeltildi* | 🟡 Talep |
+| SIP-20260814-006 | 201 ALIBEY | 09:15 | 8 kalem | ✅ Onaylandı |
+
+Satıra tıklanınca **sipariş detayı** açılır: her kalem bir satır, **ONAY** sütunu
+düzenlenebilir. Değişiklik anında kaydedilir. `0` yazılan ürün verilmedi sayılır —
+üstü çizilir, Excel'e ve konsolide toplama girmez.
+
+**📊 KONSOLİDE TOPLAM** — ürün bazında toplama listesi, onaylanmış miktarlarla.
+Aynı barın birden çok siparişi tek satırda toplanır.
+
+Liste 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş günlere bakılır.
 
 ## Dosyalar
 
 | Dosya | İçerik |
 |---|---|
 | `index.html` | İki sayfaya yönlendiren kapak |
-| `bar.html` | Sipariş girişi ekranı |
-| `depo.html` | Depo toplama ekranı |
-| `ortak.js` | **Excel üretimi** + Supabase istemcisi + yardımcılar |
+| `bar.html` | Sipariş girişi |
+| `depo.html` | Talep listesi + sipariş detayı + konsolide |
+| `ortak.js` | **Excel üretimi** + onaylanan miktar mantığı + Supabase istemcisi |
 | `veri.js` | Ürün kataloğu (`D`), Excel şablonu (`TPL_B64`), satır şablonu (`ROW2`), grup renkleri (`GC`) — *otomatik üretildi* |
 | `stil.css` | Ortak stiller |
 | `config.js` | Supabase adresi ve anon key |
-| `kurulum.sql` | Supabase kurulumu — bir kez çalıştırılır |
+| `kurulum.sql` | İlk kurulum — bir kez |
+| `guncelleme-01.sql` | Sipariş no + depo düzeltme/onay — bir kez |
 
-Excel üretimi `ortak.js` içinde **tek** `buildExcelBlob()` fonksiyonundadır. Eski sürümde
-aynı kurgu `dlExcel()` ve `dlAllExcel()` içinde iki ayrı kopya halindeydi; artık bar da depo
-da aynı kodu çağırdığı için üretilen dosya birebir aynıdır.
+Excel üretimi `ortak.js` içinde tek `buildExcelBlob()` fonksiyonundadır. Eski tek dosyalık
+sürümde aynı kurgu iki ayrı kopya halindeydi; artık bar da depo da aynı kodu çağırır.
 
 ## Kurulum
 
 ### 1. Supabase
 
-1. Supabase panelinde **SQL Editor → New query**
-2. `kurulum.sql` dosyasını yapıştır
-3. İçindeki `BURAYA_SIFRE_YAZ` yerine depo şifreni yaz
-4. **Run**
+Supabase panelinde **SQL Editor → New query**, sırayla:
+
+1. `kurulum.sql` — içindeki `BURAYA_SIFRE_YAZ` yerine depo şifreni yaz → **Run**
+2. `guncelleme-01.sql` → **Run**  *(şifreni değiştirmez, mevcut veriyi korur)*
 
 Şifreyi sonra değiştirmek için `kurulum.sql` içindeki `insert into public.ayarlar ...`
 satırını yeni şifreyle tekrar çalıştırman yeterli.
 
 ### 2. GitHub Pages
 
-1. Yeni bir repo aç
-2. Bu klasördeki dosyaları yükle
-3. **Settings → Pages → Source: Deploy from a branch → main / (root)**
-4. Birkaç dakika sonra adres hazır:
-   - Bar: `https://<kullanici>.github.io/<repo>/bar.html`
-   - Depo: `https://<kullanici>.github.io/<repo>/depo.html`
+Repo **public** olmalı (ücretsiz hesapta Pages private repo'da yayınlanmaz).
+**Settings → Pages → Deploy from a branch → main / (root)**.
 
 ## Güvenlik
 
-`config.js` içindeki anon key tarayıcıda açıktadır — Supabase'de bu **tasarım gereğidir**,
-gizli bir bilgi değildir. Korumayı veritabanı tarafı sağlar:
+`config.js` içindeki anon key tarayıcıda açıktadır — Supabase'de bu **tasarım gereğidir**.
+Korumayı veritabanı sağlar:
 
 - `siparisler` ve `ayarlar` tablolarında RLS açık ve **hiçbir policy yok** → anon key ile
-  bu tablolara doğrudan erişilemez, okunamaz, yazılamaz.
-- Tüm erişim üç `SECURITY DEFINER` fonksiyonundan geçer:
-  - `siparis_gonder` — bar sipariş yazar (outlet kodu ve kalem listesi doğrulanır)
-  - `siparis_getir` — bar **sadece kendi** o günkü siparişini okur
-  - `depo_liste` — şifre doğruysa o günün tüm siparişlerini döner
-- Depo şifresi bcrypt ile saklanır, düz metin hiçbir yerde durmaz, doğrulama sunucuda yapılır.
+  bu tablolara doğrudan erişilemez. (Canlı doğrulandı: `permission denied for table siparisler`)
+- Tüm erişim `SECURITY DEFINER` fonksiyonlarından geçer:
+  - `siparis_gonder` — bar sipariş yazar, numara üretilir (outlet kodu ve kalem listesi doğrulanır)
+  - `depo_liste` — şifre doğruysa o günün siparişlerini döner
+  - `depo_kalem_guncelle` — şifre ister, kilitli siparişte çalışmaz
+  - `depo_durum_degistir` — onaylar / kilidi açar
+- Depo şifresi bcrypt ile saklanır, doğrulama sunucuda yapılır.
 
 Bilinen ve kabul edilmiş sınır: **bar kodu bir şifre değildir.** `201`, `315` gibi kodlar
 tahmin edilebilir ve doğrulama tarayıcıda yapılır — amacı personeli doğru outlet'e
-yönlendirmek, yanlış bara sipariş girilmesini önlemektir. Linki bilen biri sahte sipariş
-gönderebilir. Gerçek koruma isteniyorsa `siparis_gonder` fonksiyonuna sunucu tarafında
+yönlendirmektir. Gerçek koruma isteniyorsa `siparis_gonder` fonksiyonuna sunucu tarafında
 doğrulanan bir bar şifresi eklenmelidir.
 
-## Çalışma mantığı
+## Bar tarafı ayrıntılar
 
-**Bar tarafı**
-- Kod girilince o günkü gönderilmiş sipariş varsa geri yüklenir → eksik eklenip yeniden gönderilir.
-- Her miktar girişi tarayıcıya taslak olarak yazılır. Telefon kilitlenir ya da sayfa yenilenirse
-  girilen miktarlar kaybolmaz. Taslak sadece o güne aittir.
-- Aynı outlet aynı gün ikinci kez gönderirse **eski sipariş bu listeyle değiştirilir** (onay sorulur).
+- Her miktar girişi tarayıcıya taslak olarak yazılır; telefon kilitlenir ya da sayfa
+  yenilenirse girilenler kaybolmaz. Taslak sadece o güne aittir, gönderilince silinir.
 - Gönderilmemiş değişiklikle sayfadan çıkılmak istenirse tarayıcı uyarır.
-- İnternet yoksa ekran çalışmaya devam eder, miktarlar taslakta durur; bağlantı gelince gönderilir.
-
-**Depo tarafı**
-- Şifre sekme oturumunda tutulur; sayfa yenilenince tekrar sorulmaz, sekme kapanınca silinir.
-- Liste 15 saniyede bir kendini yeniler.
-- Tarih seçiciyle geçmiş günlere bakılabilir.
-- Durum şeridi hangi outlet'in gönderdiğini, hangisinin beklendiğini gösterir.
-- **Tüm Siparişleri İndir** → gönderen her outlet için ayrı bir LN Infor `.xlsx` dosyası.
+- İnternet yoksa ekran çalışmaya devam eder, miktarlar taslakta durur.
 
 ## Katalog güncellemesi
 
@@ -114,7 +143,7 @@ Dosyanın geri kalanına (`TPL_B64`, `ROW2`, `GC`) dokunulmaz.
 
 ## Bakım notu
 
-Bu sürümde düzeltilen hata: ürün adındaki `&` karakteri XML'e kaçışlanmadan yazılıyordu.
-Katalogda `&` içeren 5 farklı ürün var (`ICE TEA MANGO&ANANAS`, `KOKTEYL MIX PETBUER&ALMON`,
-`CHIWAS SMOOTH&SMOKY 70CL`, `CHIWAS SMOOTH&SMOKY 100 CL`, `TEQUILA SIP&SIP`). Bunlardan biri
-siparişe girildiğinde eski sürüm bozuk `.xlsx` üretiyor, Excel dosyayı açmayı reddediyordu.
+Düzeltilen hata: ürün adındaki `&` karakteri XML'e kaçışlanmadan yazılıyordu. Katalogda
+`&` içeren 5 ürün var (`ICE TEA MANGO&ANANAS`, `KOKTEYL MIX PETBUER&ALMON`,
+`CHIWAS SMOOTH&SMOKY 70CL`, `CHIWAS SMOOTH&SMOKY 100 CL`, `TEQUILA SIP&SIP`). Bunlardan
+biri siparişe girildiğinde eski sürüm bozuk `.xlsx` üretiyor, Excel dosyayı açmıyordu.

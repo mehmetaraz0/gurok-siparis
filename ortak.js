@@ -42,6 +42,22 @@ function saat(ts) {
   });
 }
 
+/* ---------- Onaylanan miktar ---------- */
+
+// Bir kalemin Excel'e girecek miktarı.
+// m = barın talep ettiği, o = deponun onayladığı (yoksa talep geçerli).
+function gecerliMiktar(it) {
+  return (it.o === undefined || it.o === null) ? it.m : it.o;
+}
+
+// Excel'e girecek kalemler: onaylanan miktar 0 olanlar (verilmeyen ürünler) çıkarılır,
+// kalanların miktarı onaylanan değere sabitlenir.
+function excelKalemleri(kalemler) {
+  return kalemler
+    .map(it => ({ ...it, m: gecerliMiktar(it) }))
+    .filter(it => it.m > 0);
+}
+
 /* ---------- Excel üretimi ---------- */
 
 // kalemler: [{k: kod, a: ad, b: birim, m: miktar}, ...]
@@ -90,13 +106,17 @@ async function buildExcelBlob(outletKod, outletAd, kalemler) {
   });
 }
 
-// Excel'i üretip indirir. Dosya adı: siparis_CSM315_2026-08-14.xlsx
-async function indirExcel(outletKod, outletAd, kalemler, tarih) {
-  const blob = await buildExcelBlob(outletKod, outletAd, kalemler);
+// Excel'i üretip indirir. Onaylanan miktarlar uygulanır, verilmeyen kalemler düşer.
+// Dosya adı: siparis_SIP-20260814-007_CSM315.xlsx  (sipariş no yoksa tarih kullanılır)
+async function indirExcel(outletKod, outletAd, kalemler, etiket) {
+  const secilen = excelKalemleri(kalemler);
+  if (!secilen.length) throw new Error("Onaylanan kalem yok");
+
+  const blob = await buildExcelBlob(outletKod, outletAd, secilen);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "siparis_" + outletKod + "_" + (tarih || bugun()) + ".xlsx";
+  a.download = "siparis_" + (etiket || bugun()) + "_" + outletKod + ".xlsx";
   a.click();
   URL.revokeObjectURL(url);
 }

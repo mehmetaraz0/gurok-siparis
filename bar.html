@@ -25,7 +25,6 @@
     <span class="outlet-ad" id="outletAd">—</span>
     <button class="cb" style="display:inline-block;width:auto;margin:0;padding:8px 14px" onclick="barDegistir()">↔ Bar Değiştir</button>
     <span class="dz yok" id="durum">—</span>
-    <button class="db" id="dlb" disabled onclick="dlExcel()">⬇ Excel</button>
     <button class="gb" id="gb" disabled onclick="gonder()">📤 Siparişi Gönder</button>
   </div>
 </div>
@@ -40,6 +39,11 @@
       <tbody id="stb"></tbody>
     </table>
     <button class="cb" onclick="clr()">Tümünü Temizle</button>
+
+    <div class="makbuz" id="makbuz" style="display:none">
+      <div class="makbuz-bas">BUGÜN GÖNDERDİKLERİNİZ</div>
+      <div id="makbuzListe"></div>
+    </div>
   </div>
 </div>
 </div>
@@ -52,9 +56,8 @@
 <script>
 /* ================= Durum ================= */
 
-let Q = {};      // outletKod -> {kalemKod: miktar}
-let C = null;    // seçili outlet
-let sunucuTs = 0;   // seçili outlet'in sunucudaki son gönderim zamanı (ms)
+let Q = {};         // outletKod -> {kalemKod: miktar}
+let C = null;       // seçili outlet
 let kirli = false;  // gönderilmemiş değişiklik var mı
 
 /* ================= Bar kodu ile giriş =================
@@ -96,7 +99,7 @@ async function barAc(o) {
   document.getElementById("ana").style.display = "";
   document.getElementById("outletAd").textContent = C.c.slice(3) + " — " + C.n;
 
-  await yukle();
+  yukle();
   rl();
   us();
 }
@@ -150,49 +153,56 @@ function taslakSil(kod) {
   try { localStorage.removeItem(taslakAnahtar(kod)); } catch (e) {}
 }
 
-/* ================= Sunucudan yükleme ================= */
+/* ================= Açılış =================
+   Her gönderim ayrı bir sipariştir; gönderilen sipariş depoda kalır, bar ekranı
+   sıfırlanır. Bu yüzden burada sunucudan bir şey çekilmez — sadece henüz
+   gönderilmemiş yerel taslak varsa geri yüklenir. */
 
-async function yukle() {
-  durum("yok", "⏳ Yükleniyor...");
+function yukle() {
   Q[C.c] = {};
-  sunucuTs = 0;
   kirli = false;
 
-  let gonderilen = null;
-  try {
-    const { data, error } = await SB.rpc("siparis_getir", { p_outlet_kod: C.c });
-    if (error) throw error;
-    gonderilen = data;
-  } catch (e) {
-    console.error(e);
-    const t = taslakOku(C.c);
-    if (t) { Q[C.c] = t.q; kirli = true; }
-    durum("hata", "⚠ Sunucuya ulaşılamadı — çevrimdışı çalışıyorsunuz");
-    return;
-  }
-
   const taslak = taslakOku(C.c);
-
-  if (gonderilen) {
-    sunucuTs = gonderilen.ts;
-    gonderilen.kalemler.forEach(it => { Q[C.c][it.k] = it.m; });
-
-    // Gönderimden SONRA yapılmış yerel değişiklik varsa o kazanır
-    if (taslak && taslak.ts > sunucuTs) {
-      Q[C.c] = taslak.q;
-      kirli = true;
-      durum("hata", "⚠ Gönderilmemiş değişikliğiniz var");
-    } else {
-      taslakSil(C.c);
-      durum("var", "✓ " + gonderilen.saat + "'de gönderildi (" + gonderilen.kalemler.length + " kalem)");
-    }
-  } else if (taslak) {
+  if (taslak && Object.keys(taslak.q).length) {
     Q[C.c] = taslak.q;
     kirli = true;
-    durum("hata", "⚠ Kaydedilmiş taslak — henüz gönderilmedi");
+    durum("hata", "⚠ Gönderilmemiş taslağınız var");
   } else {
-    durum("yok", "Bugün sipariş gönderilmedi");
+    durum("yok", "Yeni sipariş");
   }
+  makbuzCiz();
+}
+
+/* ================= Gönderim makbuzu =================
+   Bar gönderdikten sonra listesi sıfırlanır; ne gönderdiğini unutmaması için
+   o günkü gönderimlerinin numarası ve saati bu cihazda tutulur. */
+
+function makbuzAnahtar(kod) { return "gurok_makbuz_" + kod; }
+
+function makbuzOku(kod) {
+  try {
+    const m = JSON.parse(localStorage.getItem(makbuzAnahtar(kod)) || "null");
+    return (m && m.tarih === bugun()) ? m.liste : [];
+  } catch (e) { return []; }
+}
+
+function makbuzEkle(kod, kayit) {
+  const liste = makbuzOku(kod);
+  liste.unshift(kayit);
+  try {
+    localStorage.setItem(makbuzAnahtar(kod), JSON.stringify({ tarih: bugun(), liste }));
+  } catch (e) {}
+}
+
+function makbuzCiz() {
+  const kutu = document.getElementById("makbuz");
+  const liste = makbuzOku(C.c);
+  if (!liste.length) { kutu.style.display = "none"; return; }
+
+  kutu.style.display = "";
+  document.getElementById("makbuzListe").innerHTML = liste.map(x =>
+    '<div class="makbuz-sat"><b>' + htmlEsc(x.no) + '</b>'
+    + '<span>' + htmlEsc(x.saat) + ' — ' + x.kalem + ' kalem</span></div>').join("");
 }
 
 function durum(sinif, metin) {
@@ -263,15 +273,18 @@ function sq(inp) {
 function us() {
   const tb = document.getElementById("stb"),
         ct = document.getElementById("cnt"),
-        b  = document.getElementById("dlb"),
         g  = document.getElementById("gb");
 
-  if (!C) { tb.innerHTML = ""; ct.textContent = "0"; b.disabled = true; g.disabled = true; return; }
+  if (!C) { tb.innerHTML = ""; ct.textContent = "0"; g.disabled = true; return; }
 
   const q = Q[C.c] || {}, items = C.i.filter(i => q[i.k]);
   ct.textContent = items.length;
-  b.disabled = items.length === 0;
   g.disabled = items.length === 0;
+
+  // Girilmiş ama gönderilmemiş miktar varsa rozet bunu hatırlatsın
+  if (kirli && items.length) {
+    durum("hata", "⚠ " + items.length + " kalem girildi — henüz gönderilmedi");
+  }
   tb.innerHTML = items.map(i =>
     '<tr><td style="font-family:monospace;font-size:10px">' + htmlEsc(i.k) + '</td>'
     + '<td>' + htmlEsc(i.a) + '</td>'
@@ -301,8 +314,9 @@ async function gonder() {
   const kalemler = seciliKalemler();
   if (!kalemler.length) return;
 
-  if (sunucuTs > 0 &&
-      !confirm("Bu outlet bugün zaten sipariş göndermiş.\n\nDevam ederseniz eski sipariş bu listeyle DEĞİŞTİRİLİR.\n\nGönderilsin mi?")) {
+  if (!confirm(kalemler.length + " kalemlik sipariş depoya gönderilecek.\n\n"
+             + "Gönderdikten sonra listeniz sıfırlanır, sipariş depoda kalır.\n"
+             + "Gün içinde istediğiniz kadar yeni sipariş gönderebilirsiniz.\n\nGönderilsin mi?")) {
     return;
   }
 
@@ -316,46 +330,30 @@ async function gonder() {
     });
     if (error) throw error;
 
-    sunucuTs = data.ts;
+    // Gönderim başarılı: makbuza yaz, ekranı sıfırla
+    makbuzEkle(C.c, { no: data.siparis_no, saat: data.saat, kalem: data.kalem });
+    Q[C.c] = {};
     kirli = false;
     taslakSil(C.c);
+    rl();
+    us();
+    makbuzCiz();
 
     b.textContent = "✅ Gönderildi";
     b.classList.add("ok");
-    durum("var", "✓ " + data.saat + "'de gönderildi (" + kalemler.length + " kalem)");
+    durum("var", "✓ " + data.siparis_no + " gönderildi — " + data.kalem + " kalem, " + data.saat);
     setTimeout(() => {
       b.textContent = "📤 Siparişi Gönder";
       b.classList.remove("ok");
       b.disabled = false;
-    }, 2500);
+    }, 3000);
 
   } catch (e) {
     console.error(e);
     b.textContent = "❌ Gönderilemedi";
-    durum("hata", "⚠ Gönderilemedi — internet bağlantınızı kontrol edin");
-    setTimeout(() => { b.textContent = "📤 Siparişi Gönder"; b.disabled = false; }, 2500);
+    durum("hata", "⚠ Gönderilemedi — internet bağlantınızı kontrol edin, tekrar deneyin");
+    setTimeout(() => { b.textContent = "📤 Siparişi Gönder"; b.disabled = false; }, 3000);
   }
-}
-
-/* ================= Excel ================= */
-
-async function dlExcel() {
-  if (!C) return;
-  const kalemler = seciliKalemler();
-  if (!kalemler.length) return;
-
-  const b = document.getElementById("dlb");
-  b.textContent = "⏳";
-  b.disabled = true;
-  try {
-    await indirExcel(C.c, C.n, kalemler);
-    b.textContent = "✅";
-    b.classList.add("ok");
-  } catch (e) {
-    console.error(e);
-    b.textContent = "❌";
-  }
-  setTimeout(() => { b.textContent = "⬇ Excel"; b.classList.remove("ok"); b.disabled = false; }, 2000);
 }
 
 /* Gönderilmemiş değişiklikle sayfadan çıkışta uyar */

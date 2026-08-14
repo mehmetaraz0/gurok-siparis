@@ -17,33 +17,45 @@
   <div class="err" id="hata"></div>
 </div>
 
-<!-- ===== Ana ekran ===== -->
+<!-- ===== Ana ===== -->
 <div id="ana" style="display:none">
   <div class="hdr">
-    <h1>DEPO TOPLAMA — Tüm Outlet Siparişleri</h1>
+    <h1 id="hdrBaslik">DEPO — GELEN TALEPLER</h1>
     <div class="hr">
-      <span class="canli"><i></i> Canlı — 15 sn'de bir yenilenir</span>
-      <button class="db" id="dlAllBtn" onclick="dlAllExcel()">⬇ Tüm Siparişleri İndir</button>
+      <span class="canli"><i></i> Canlı</span>
+      <input type="date" id="tarih" onchange="yenile()">
+      <button class="db" onclick="yenile()">🔄 Yenile</button>
     </div>
   </div>
 
-  <div style="padding:12px">
+  <!-- ---- Ekran 1: talep listesi ---- -->
+  <div id="ekranListe" style="padding:12px">
     <div class="serit">
-      <div class="serit-ust">
-        <b id="ozet">Yükleniyor...</b>
-        <span>
-          <input type="date" id="tarih" onchange="tarihDegisti()">
-          <button class="cb" style="display:inline-block;width:auto;margin:0 0 0 8px;padding:8px 14px" onclick="yenile()">🔄 Yenile</button>
-        </span>
-      </div>
+      <div class="serit-ust"><b id="ozet">Yükleniyor...</b></div>
       <div class="serit-alt" id="chipler"></div>
     </div>
 
-    <div class="depo-header">
-      <span>KONSOLİDE SİPARİŞ LİSTESİ</span>
-      <span class="depo-count" id="depoCount">0 kalem</span>
+    <div class="sekmeler">
+      <button class="sk aktif" id="skTalep" onclick="sekmeGec('talep')">📋 TALEPLER</button>
+      <button class="sk" id="skKons" onclick="sekmeGec('kons')">📊 KONSOLİDE TOPLAM</button>
     </div>
-    <div id="depoContent"><div class="em">Yükleniyor...</div></div>
+
+    <div id="talepler"></div>
+
+    <div id="konsolide" style="display:none">
+      <div class="depo-header">
+        <span>KONSOLİDE — onaylanmış miktarlarla</span>
+        <span class="depo-count" id="depoCount">0 kalem</span>
+      </div>
+      <div id="depoContent"></div>
+    </div>
+  </div>
+
+  <!-- ---- Ekran 2: sipariş detayı ---- -->
+  <div id="ekranDetay" style="display:none;padding:12px">
+    <button class="geri" onclick="listeyeDon()">← Taleplere dön</button>
+    <div id="detayBas"></div>
+    <div id="detayIcerik"></div>
   </div>
 </div>
 
@@ -55,14 +67,13 @@
 <script>
 /* ================= Durum ================= */
 
-let SIFRE = null;        // oturum boyunca bellekte
-let SIPARISLER = [];     // seçili günün gönderilmiş siparişleri
+let SIFRE = null;
+let SIPARISLER = [];      // seçili günün siparişleri
+let ACIK_NO = null;       // detayı açık siparişin numarası (null ise liste ekranı)
 let zamanlayici = null;
 
 /* ================= Giriş ================= */
 
-// Sayfa yenilendiğinde tekrar şifre sormamak için sekme oturumunda tutulur.
-// sessionStorage: sekme kapanınca silinir, diğer sitelerden okunamaz.
 const kayitli = sessionStorage.getItem("gurok_depo_sifre");
 if (kayitli) { SIFRE = kayitli; basla(); }
 
@@ -82,14 +93,11 @@ async function giris() {
   err.textContent = "";
 
   try {
-    // Şifre burada değil, Supabase tarafında doğrulanır.
     const { error } = await SB.rpc("depo_liste", { p_sifre: deger, p_tarih: bugun() });
     if (error) throw error;
-
     SIFRE = deger;
     sessionStorage.setItem("gurok_depo_sifre", deger);
     basla();
-
   } catch (e) {
     console.error(e);
     err.textContent = (e.message || "").includes("Sifre")
@@ -111,14 +119,7 @@ function basla() {
   zamanlayici = setInterval(yenile, 15000);
 }
 
-function cikis() {
-  sessionStorage.removeItem("gurok_depo_sifre");
-  location.reload();
-}
-
-/* ================= Veri çekme ================= */
-
-function tarihDegisti() { yenile(); }
+/* ================= Veri ================= */
 
 async function yenile() {
   const tarih = document.getElementById("tarih").value || bugun();
@@ -129,46 +130,107 @@ async function yenile() {
     ciz();
   } catch (e) {
     console.error(e);
-    // Şifre süresince oturum geçerli; geçici ağ hatasında ekranı boşaltma
     document.getElementById("ozet").textContent = "⚠ Bağlantı hatası — son veriler gösteriliyor";
   }
 }
 
-/* ================= Çizim ================= */
+function siparisBul(no) { return SIPARISLER.find(s => s.siparis_no === no) || null; }
+
+/* ================= Çizim yönlendirici ================= */
 
 function ciz() {
-  cizSerit();
-  cizTablo();
+  if (ACIK_NO) {
+    const s = siparisBul(ACIK_NO);
+    if (!s) { listeyeDon(); return; }   // sipariş kaybolduysa listeye dön
+    cizDetay(s);
+  } else {
+    cizSerit();
+    cizTalepler();
+    cizKonsolide();
+  }
+}
+
+/* ================= Ekran 1: liste ================= */
+
+function sekmeGec(hangi) {
+  const t = hangi === "talep";
+  document.getElementById("talepler").style.display   = t ? "" : "none";
+  document.getElementById("konsolide").style.display  = t ? "none" : "";
+  document.getElementById("skTalep").classList.toggle("aktif", t);
+  document.getElementById("skKons").classList.toggle("aktif", !t);
 }
 
 function cizSerit() {
   const gelenler = new Set(SIPARISLER.map(s => s.outlet_kod));
+  const onayli = SIPARISLER.filter(s => s.durum === "onaylandi").length;
+
   document.getElementById("ozet").textContent =
-    D.length + " outlet'ten " + gelenler.size + " tanesi sipariş gönderdi"
-    + " — " + (D.length - gelenler.size) + " bekleniyor";
+    SIPARISLER.length + " sipariş — " + gelenler.size + " bar gönderdi, "
+    + onayli + " onaylandı, " + (SIPARISLER.length - onayli) + " bekliyor";
 
   const saatler = {};
   SIPARISLER.forEach(s => { saatler[s.outlet_kod] = saat(s.gonderilme_saati); });
 
   document.getElementById("chipler").innerHTML = D.map(o => {
     const geldi = gelenler.has(o.c);
-    const baslik = htmlEsc(o.n) + (geldi ? " — " + saatler[o.c] : " — bekleniyor");
+    const baslik = htmlEsc(o.n) + (geldi ? " — son " + saatler[o.c] : " — sipariş yok");
     return '<span class="chip ' + (geldi ? "geldi" : "bekliyor") + '" title="' + baslik + '">'
-         + (geldi ? "✓ " : "") + htmlEsc(o.c) + '</span>';
+         + (geldi ? "✓ " : "") + htmlEsc(o.c.slice(3)) + '</span>';
   }).join("");
 }
 
-function cizTablo() {
+function cizTalepler() {
+  const k = document.getElementById("talepler");
+
+  if (!SIPARISLER.length) {
+    k.innerHTML = '<div class="em">Bu tarihte gönderilmiş sipariş yok.</div>';
+    return;
+  }
+
+  let h = '<div class="talep-bas">'
+        + '<span>SİPARİŞ NO</span><span>BAR</span><span>SAAT</span>'
+        + '<span>KALEM</span><span>DURUM</span><span></span></div>';
+
+  SIPARISLER.forEach(s => {
+    const onaylandi = s.durum === "onaylandi";
+    const verilmeyen = s.kalemler.filter(it => gecerliMiktar(it) === 0).length;
+    // Miktarı değişmiş ama tamamen iptal edilmemiş kalemler ("verilmedi" ile çakışmasın)
+    const duzeltilen = s.kalemler.filter(it =>
+      it.o !== undefined && it.o !== null && it.o !== it.m && it.o > 0).length;
+
+    h += '<div class="talep-sat' + (onaylandi ? " onayli" : "") + '"'
+       + ' onclick="detayAc(\'' + htmlEsc(s.siparis_no) + '\')">'
+       + '<span class="tno">' + htmlEsc(s.siparis_no) + '</span>'
+       + '<span><b>' + htmlEsc(s.outlet_kod.slice(3)) + '</b> ' + htmlEsc(s.outlet_ad) + '</span>'
+       + '<span>' + saat(s.gonderilme_saati) + '</span>'
+       + '<span>' + s.kalemler.length + ' kalem'
+       + (duzeltilen ? ' <i class="uyari">' + duzeltilen + ' düzeltildi</i>' : '')
+       + (verilmeyen ? ' <i class="uyari">' + verilmeyen + ' verilmedi</i>' : '')
+       + '</span>'
+       + '<span>' + (onaylandi
+            ? '<span class="rz onay">✅ Onaylandı ' + (s.onay_saati ? saat(s.onay_saati) : "") + '</span>'
+            : '<span class="rz talep">🟡 Talep</span>') + '</span>'
+       + '<span class="ileri">›</span>'
+       + '</div>';
+  });
+
+  k.innerHTML = h;
+}
+
+function cizKonsolide() {
   const dc = document.getElementById("depoContent");
   const dcount = document.getElementById("depoCount");
 
-  // Tüm outlet siparişlerini kalem bazında topla
-  const toplam = {};   // kod -> {a, b, g, outlets:{kod:miktar}, total}
+  // Onaylanan miktarlar geçerli; verilmeyen (0) kalemler toplama girmez.
+  const toplam = {};
   SIPARISLER.forEach(s => {
     s.kalemler.forEach(it => {
+      const m = gecerliMiktar(it);
+      if (m <= 0) return;
       if (!toplam[it.k]) toplam[it.k] = { a: it.a, b: it.b, g: it.g, outlets: {}, total: 0 };
-      toplam[it.k].outlets[s.outlet_kod] = (toplam[it.k].outlets[s.outlet_kod] || 0) + it.m;
-      toplam[it.k].total += it.m;
+      const ok = s.outlet_kod;
+      toplam[it.k].outlets[ok] = (toplam[it.k].outlets[ok] || 0) + m;
+      toplam[it.k].total += m;
     });
   });
 
@@ -176,11 +238,10 @@ function cizTablo() {
   dcount.textContent = codes.length + " kalem";
 
   if (!codes.length) {
-    dc.innerHTML = '<div class="em">Bu tarihte gönderilmiş sipariş yok.</div>';
+    dc.innerHTML = '<div class="em">Toplanacak kalem yok.</div>';
     return;
   }
 
-  // Gruba göre grupla
   const groups = {};
   codes.forEach(k => {
     const g = toplam[k].g || "DİĞER";
@@ -197,7 +258,7 @@ function cizTablo() {
     groups[g].sort((a, b) => toplam[a].a.localeCompare(toplam[b].a, "tr"));
     groups[g].forEach(k => {
       const it = toplam[k];
-      const detay = Object.entries(it.outlets).map(([oc, m]) => oc + ":" + m).join(", ");
+      const detay = Object.entries(it.outlets).map(([oc, m]) => oc.slice(3) + ":" + m).join(", ");
       h += '<tr>'
          + '<td style="font-family:monospace;font-size:10px">' + htmlEsc(k) + '</td>'
          + '<td>' + htmlEsc(it.a) + '</td>'
@@ -211,37 +272,149 @@ function cizTablo() {
   dc.innerHTML = h + '</tbody></table>';
 }
 
-/* ================= Excel ================= */
+/* ================= Ekran 2: sipariş detayı ================= */
 
-// Gönderen her outlet için ayrı bir LN Infor dosyası indirir.
-async function dlAllExcel() {
-  if (!SIPARISLER.length) { alert("Bu tarihte gönderilmiş sipariş yok."); return; }
+function detayAc(no) {
+  ACIK_NO = no;
+  document.getElementById("ekranListe").style.display = "none";
+  document.getElementById("ekranDetay").style.display = "";
+  document.getElementById("hdrBaslik").textContent = "DEPO — SİPARİŞ " + no;
+  window.scrollTo(0, 0);
+  ciz();
+}
 
-  const btn = document.getElementById("dlAllBtn");
-  btn.disabled = true;
-  const tarih = document.getElementById("tarih").value || bugun();
-  let basarili = 0;
+function listeyeDon() {
+  ACIK_NO = null;
+  document.getElementById("ekranDetay").style.display = "none";
+  document.getElementById("ekranListe").style.display = "";
+  document.getElementById("hdrBaslik").textContent = "DEPO — GELEN TALEPLER";
+  window.scrollTo(0, 0);
+  ciz();
+}
 
-  for (let i = 0; i < SIPARISLER.length; i++) {
-    const s = SIPARISLER[i];
-    btn.textContent = "⏳ " + (i + 1) + "/" + SIPARISLER.length + " " + s.outlet_kod + "...";
-    try {
-      await indirExcel(s.outlet_kod, s.outlet_ad, s.kalemler, tarih);
-      basarili++;
-      // Tarayıcının çoklu indirmeyi engellememesi için kısa ara
-      await new Promise(r => setTimeout(r, 800));
-    } catch (e) {
-      console.error("Hata: " + s.outlet_kod, e);
-    }
+function cizDetay(s) {
+  const onaylandi = s.durum === "onaylandi";
+
+  document.getElementById("detayBas").innerHTML =
+      '<div class="detay-bas">'
+    + '<div>'
+    + '<div class="dno">' + htmlEsc(s.siparis_no) + '</div>'
+    + '<div class="dbar"><b>' + htmlEsc(s.outlet_kod.slice(3)) + '</b> — ' + htmlEsc(s.outlet_ad)
+    + ' &nbsp;·&nbsp; ' + saat(s.gonderilme_saati) + ' &nbsp;·&nbsp; ' + s.kalemler.length + ' kalem</div>'
+    + '</div>'
+    + '<div class="detay-btn">'
+    + (onaylandi
+        ? '<span class="rz onay">✅ Onaylandı ' + (s.onay_saati ? saat(s.onay_saati) : "") + '</span>'
+          + '<button class="cb" style="display:inline-block;width:auto;margin:0;padding:9px 16px" '
+          + 'onclick="durumDegistir(\'talep\')">🔓 Kilidi Aç</button>'
+        : '<button class="gb" onclick="durumDegistir(\'onaylandi\')">✅ ONAYLA ve KİLİTLE</button>')
+    + '<button class="db" id="exBtn" onclick="detayExcel()">⬇ Excel İndir</button>'
+    + '</div></div>';
+
+  let h = '<table class="detay-tbl"><thead><tr>'
+        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BR</th><th>TALEP</th><th>ONAY</th>'
+        + '</tr></thead><tbody>';
+
+  s.kalemler.forEach(it => {
+    const onay = gecerliMiktar(it);
+    const degisti = it.o !== undefined && it.o !== null && it.o !== it.m;
+    h += '<tr class="' + (onay === 0 ? "verilmedi" : (degisti ? "degisti" : "")) + '">'
+       + '<td style="font-family:monospace;font-size:10px">' + htmlEsc(it.k) + '</td>'
+       + '<td>' + htmlEsc(it.a) + '</td>'
+       + '<td style="text-align:center">' + htmlEsc(it.b) + '</td>'
+       + '<td style="text-align:center;font-weight:700">' + it.m + '</td>'
+       + '<td style="text-align:center">'
+       + '<input type="number" min="0" class="onay-inp" value="' + onay + '"'
+       + ' data-k="' + htmlEsc(it.k) + '" data-eski="' + onay + '"'
+       + (onaylandi ? " disabled" : "")
+       + ' onchange="kalemKaydet(this)" onfocus="this.select()">'
+       + '</td></tr>';
+  });
+
+  document.getElementById("detayIcerik").innerHTML = h + '</tbody></table>'
+    + '<div class="detay-not">Onay sütununa <b>0</b> yazılan ürün verilmedi sayılır; '
+    + 'Excel çıktısına ve konsolide toplama girmez.</div>';
+}
+
+async function kalemKaydet(inp) {
+  const yeni = parseInt(inp.value);
+  const eski = parseInt(inp.dataset.eski);
+
+  if (isNaN(yeni) || yeni < 0) { inp.value = eski; return; }
+  if (yeni === eski) return;
+
+  inp.disabled = true;
+  try {
+    const { error } = await SB.rpc("depo_kalem_guncelle", {
+      p_sifre: SIFRE, p_siparis_no: ACIK_NO,
+      p_kalem_kod: inp.dataset.k, p_onay: yeni
+    });
+    if (error) throw error;
+
+    // Yerel kopyayı da güncelle ki bir sonraki çizim doğru olsun
+    const s = siparisBul(ACIK_NO);
+    const it = s.kalemler.find(x => x.k === inp.dataset.k);
+    if (it) it.o = yeni;
+
+    inp.dataset.eski = yeni;
+    inp.disabled = false;
+    inp.classList.add("kaydedildi");
+    setTimeout(() => inp.classList.remove("kaydedildi"), 1200);
+    cizDetay(s);
+
+  } catch (e) {
+    console.error(e);
+    inp.value = eski;
+    inp.disabled = false;
+    alert("Kaydedilemedi: " + (e.message || "bağlantı hatası"));
+  }
+}
+
+async function durumDegistir(yeniDurum) {
+  const s = siparisBul(ACIK_NO);
+  if (!s) return;
+
+  if (yeniDurum === "onaylandi") {
+    const verilmeyen = s.kalemler.filter(it => gecerliMiktar(it) === 0).length;
+    if (!confirm(s.siparis_no + " onaylanacak ve kilitlenecek.\n\n"
+               + (verilmeyen ? verilmeyen + " ürün verilmedi olarak işaretli.\n" : "")
+               + "Kilitli siparişte düzeltme yapılamaz (kilidi açabilirsiniz).\n\nOnaylansın mı?")) return;
   }
 
-  btn.textContent = "✅ " + basarili + " dosya indirildi!";
-  btn.classList.add("ok");
+  try {
+    const { error } = await SB.rpc("depo_durum_degistir", {
+      p_sifre: SIFRE, p_siparis_no: ACIK_NO, p_durum: yeniDurum
+    });
+    if (error) throw error;
+    await yenile();
+  } catch (e) {
+    console.error(e);
+    alert("İşlem yapılamadı: " + (e.message || "bağlantı hatası"));
+  }
+}
+
+/* ================= Excel ================= */
+
+async function detayExcel() {
+  const s = siparisBul(ACIK_NO);
+  if (!s) return;
+
+  const btn = document.getElementById("exBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ Hazırlanıyor...";
+  try {
+    await indirExcel(s.outlet_kod, s.outlet_ad, s.kalemler, s.siparis_no);
+    btn.textContent = "✅ İndirildi";
+    btn.classList.add("ok");
+  } catch (e) {
+    console.error(e);
+    btn.textContent = "❌ " + (e.message === "Onaylanan kalem yok" ? "Onaylanan kalem yok" : "Hata");
+  }
   setTimeout(() => {
-    btn.textContent = "⬇ Tüm Siparişleri İndir";
+    btn.textContent = "⬇ Excel İndir";
     btn.classList.remove("ok");
     btn.disabled = false;
-  }, 3000);
+  }, 2500);
 }
 </script>
 </body>

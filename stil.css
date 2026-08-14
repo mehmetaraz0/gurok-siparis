@@ -85,4 +85,71 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .canli i{width:7px;height:7px;border-radius:50%;background:#2e7d32;display:inline-block;animation:yanip 2s infinite}
 @keyframes yanip{0%,100%{opacity:1}50%{opacity:.25}}
 
-@media(max-width:768px){.mn{flex-direction:column}.sp{width:100%;min-width:auto;border-left:none;border-top:3px solid #c00000;max-height:none;position:relative;top:0}.lp{max-height:none}.ic{width:80px;font-size:9px}}
+/* ===== Bar: gönderim makbuzu ===== */
+.makbuz{margin-top:16px;border-top:2px solid #eee;padding-top:12px}
+.makbuz-bas{font-size:11px;font-weight:700;color:#1a6b3c;letter-spacing:.4px;margin-bottom:7px}
+.makbuz-sat{display:flex;justify-content:space-between;align-items:center;gap:8px;
+            background:#f2f9f4;border:1px solid #d7ecdd;border-radius:6px;
+            padding:7px 10px;margin-bottom:5px}
+.makbuz-sat b{font-family:monospace;font-size:11px;color:#1a6b3c}
+.makbuz-sat span{font-size:11px;color:#777}
+
+/* ===== Depo: sekmeler ===== */
+.sekmeler{display:flex;gap:6px;margin-bottom:10px}
+.sk{padding:10px 18px;background:#fff;color:#888;border:1px solid #e0e0e0;border-radius:8px;
+    font-size:13px;font-weight:700;cursor:pointer}
+.sk:hover{color:#1e3a5f}
+.sk.aktif{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+
+/* ===== Depo: talep listesi ===== */
+.talep-bas,.talep-sat{display:grid;grid-template-columns:170px 1fr 62px 210px 170px 24px;
+                      gap:10px;align-items:center}
+.talep-bas{padding:8px 14px;font-size:10px;font-weight:700;color:#999;letter-spacing:.5px}
+.talep-sat{background:#fff;border-radius:8px;padding:13px 14px;margin-bottom:6px;cursor:pointer;
+           box-shadow:0 1px 3px rgba(0,0,0,.07);border-left:4px solid #e6a800;
+           transition:transform .12s,box-shadow .12s;font-size:13px}
+.talep-sat:hover{transform:translateX(3px);box-shadow:0 3px 10px rgba(0,0,0,.13)}
+.talep-sat.onayli{border-left-color:#2e7d32;background:#fbfefb}
+.talep-sat .tno{font-family:monospace;font-size:12px;font-weight:700;color:#1e3a5f}
+.talep-sat .ileri{font-size:22px;color:#bbb;text-align:right}
+.talep-sat .uyari{font-style:normal;font-size:10px;background:#fff3e0;color:#b26500;
+                  padding:2px 7px;border-radius:9px;margin-left:4px;white-space:nowrap}
+.rz{font-size:11px;font-weight:700;padding:5px 11px;border-radius:12px;white-space:nowrap}
+.rz.talep{background:#fff8e1;color:#b26500;border:1px solid #ffe0a3}
+.rz.onay{background:#e3f5e8;color:#1a6b3c;border:1px solid #a8d5b8}
+
+/* ===== Depo: sipariş detayı ===== */
+.geri{background:none;border:none;color:#1e3a5f;font-size:14px;font-weight:700;
+      cursor:pointer;padding:6px 0;margin-bottom:10px}
+.geri:hover{text-decoration:underline}
+.detay-bas{background:#fff;border-radius:10px;padding:16px;margin-bottom:12px;
+           box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;justify-content:space-between;
+           align-items:center;flex-wrap:wrap;gap:12px}
+.detay-bas .dno{font-family:monospace;font-size:19px;font-weight:700;color:#1e3a5f}
+.detay-bas .dbar{font-size:13px;color:#777;margin-top:3px}
+.detay-btn{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.detay-tbl{width:100%;border-collapse:collapse;font-size:12px;background:#fff;
+           border-radius:8px;overflow:hidden}
+.detay-tbl th{background:#1a1a1a;color:#fff;padding:9px;text-align:left;font-size:11px;
+              position:sticky;top:0}
+.detay-tbl td{padding:7px 9px;border-bottom:1px solid #f0f0f0}
+.detay-tbl tr.degisti{background:#fff8e1}
+.detay-tbl tr.verilmedi{background:#fdeaea;color:#999}
+.detay-tbl tr.verilmedi td:nth-child(2){text-decoration:line-through}
+.onay-inp{width:66px;padding:6px 4px;text-align:center;border:2px solid #2e75b6;border-radius:6px;
+          font-size:14px;font-weight:700;background:#fff}
+.onay-inp:focus{outline:none;border-color:#1e3a5f;background:#fffde7}
+.onay-inp:disabled{border-color:#ddd;background:#f4f4f4;color:#999}
+.onay-inp.kaydedildi{border-color:#2e7d32;background:#e3f5e8}
+.detay-not{font-size:12px;color:#888;padding:12px 4px}
+
+@media(max-width:768px){
+  .mn{flex-direction:column}
+  .sp{width:100%;min-width:auto;border-left:none;border-top:3px solid #c00000;max-height:none;position:relative;top:0}
+  .lp{max-height:none}
+  .ic{width:80px;font-size:9px}
+  .talep-bas{display:none}
+  .talep-sat{grid-template-columns:1fr auto;gap:5px 10px;font-size:12px}
+  .talep-sat .ileri{display:none}
+  .detay-bas{flex-direction:column;align-items:stretch}
+}
