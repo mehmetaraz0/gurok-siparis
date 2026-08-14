@@ -221,18 +221,21 @@ function rl() {
         + '<div class="ib"><span>' + htmlEsc(C.c) + ' — ' + htmlEsc(C.n) + '</span>'
         + '<span class="bg">' + C.i.length + ' kalem</span></div>';
 
-  let g = "";
-  C.i.forEach(i => {
-    if (i.g !== g) { g = i.g; h += '<div class="gh ' + grupSinifi(i.g) + '">' + htmlEsc(i.g) + '</div>'; }
-    const q = Q[C.c]?.[i.k] || "";
-    h += '<div class="ir' + (q ? " hq" : "") + '"'
-       + ' data-n="' + htmlEsc(i.a.toLowerCase()) + '" data-c="' + htmlEsc(i.k.toLowerCase()) + '">'
-       + '<span class="ic">' + htmlEsc(i.k) + '</span>'
-       + '<span class="in">' + htmlEsc(i.a) + '</span>'
-       + '<span class="iu">' + htmlEsc(i.b) + '</span>'
-       + '<span class="iq"><input type="number" min="0" value="' + (q || "") + '"'
-       + ' class="' + (q ? "fl" : "") + '" data-k="' + htmlEsc(i.k) + '"'
-       + ' onchange="sq(this)" onfocus="this.select()"></span></div>';
+  // Her grup tek blok, sırası GRUP_INDEX'e göre (bkz. ortak.js)
+  grupla(C.i).forEach(([g, items]) => {
+    h += '<div class="gh ' + grupSinifi(g) + '">' + htmlEsc(g)
+       + ' <span class="gs">' + items.length + '</span></div>';
+    items.forEach(i => {
+      const q = Q[C.c]?.[i.k] || "";
+      h += '<div class="ir' + (q ? " hq" : "") + '"'
+         + ' data-n="' + htmlEsc(i.a.toLowerCase()) + '" data-c="' + htmlEsc(i.k.toLowerCase()) + '">'
+         + '<span class="ic">' + htmlEsc(i.k) + '</span>'
+         + '<span class="in">' + htmlEsc(i.a) + '</span>'
+         + '<span class="iu">' + htmlEsc(i.b) + '</span>'
+         + '<span class="iq"><input type="number" min="0" value="' + (q || "") + '"'
+         + ' class="' + (q ? "fl" : "") + '" data-k="' + htmlEsc(i.k) + '"'
+         + ' onchange="sq(this)" onfocus="this.select()"></span></div>';
+    });
   });
   p.innerHTML = h;
 }
@@ -277,7 +280,8 @@ function us() {
 
   if (!C) { tb.innerHTML = ""; ct.textContent = "0"; g.disabled = true; return; }
 
-  const q = Q[C.c] || {}, items = C.i.filter(i => q[i.k]);
+  // Özet, gönderim ve Excel hep aynı sırayı kullansın diye tek kaynaktan
+  const items = seciliKalemler();
   ct.textContent = items.length;
   g.disabled = items.length === 0;
 
@@ -288,7 +292,7 @@ function us() {
   tb.innerHTML = items.map(i =>
     '<tr><td style="font-family:monospace;font-size:10px">' + htmlEsc(i.k) + '</td>'
     + '<td>' + htmlEsc(i.a) + '</td>'
-    + '<td style="text-align:center;font-weight:700">' + q[i.k] + '</td>'
+    + '<td style="text-align:center;font-weight:700">' + i.m + '</td>'
     + '<td style="text-align:center">' + htmlEsc(i.b) + '</td></tr>').join("");
 }
 
@@ -304,9 +308,12 @@ function clr() {
 
 /* ================= Sipariş gönderimi ================= */
 
+// Ekranda görülen sırayla döner; Excel satır sırası da bu olur.
 function seciliKalemler() {
+  if (!C) return [];
   const q = Q[C.c] || {};
-  return C.i.filter(i => q[i.k]).map(i => ({ k: i.k, a: i.a, b: i.b, g: i.g, m: q[i.k] }));
+  return grupluSirala(C.i.filter(i => q[i.k]))
+    .map(i => ({ k: i.k, a: i.a, b: i.b, g: i.g, m: q[i.k] }));
 }
 
 async function gonder() {

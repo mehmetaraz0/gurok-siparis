@@ -252,7 +252,10 @@ function cizKonsolide() {
         + '<th>KOD</th><th>ÜRÜN ADI</th><th>BİRİM</th><th>TOPLAM</th><th>OUTLET DETAY</th>'
         + '</tr></thead><tbody>';
 
-  Object.keys(groups).sort().forEach(g => {
+  // Grup sırası bar ekranıyla aynı (ortak.js → GRUP_INDEX)
+  Object.keys(groups)
+    .sort((a, b) => (grupIndex(a) - grupIndex(b)) || a.localeCompare(b, "tr"))
+    .forEach(g => {
     h += '<tr><td colspan="5"><div class="depo-grp">' + htmlEsc(g)
        + ' (' + groups[g].length + ' kalem)</div></td></tr>';
     groups[g].sort((a, b) => toplam[a].a.localeCompare(toplam[b].a, "tr"));

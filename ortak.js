@@ -132,3 +132,52 @@ function outletBul(kod) {
 function grupSinifi(g) {
   return "g" + (GC[g] ?? "d");
 }
+
+/* ---------- Grup sırası ----------
+   Katalog ürün KODUNA göre sıralı, gruba göre değil. Bu yüzden ham sırayla
+   basıldığında aynı grup listede birkaç kez başlık alıyordu: PREMIX SODA
+   ICA01 ailesinde, PREMIX KOLA ICA02 ailesinde olduğu için PREMIX üç ayrı
+   yerde çıkıyordu; CSM301'de CARTE D'OR dört, ALGIDA beş ayrı yerdeydi.
+
+   Sıra iki kademeli: önce GC'deki renk kümesi (alkolsüz → alkollü → servis →
+   yiyecek → temizlik → hijyen → dondurma → atıştırmalık), sonra GC içindeki
+   tanım sırası. Böylece dondurma alt grupları da art arda gelir. */
+
+const GRUP_INDEX = (() => {
+  const anahtarlar = Object.keys(GC);
+  const tanimSirasi = {};
+  anahtarlar.forEach((g, n) => { tanimSirasi[g] = n; });
+
+  const sirali = anahtarlar.slice().sort(
+    (a, b) => (GC[a] - GC[b]) || (tanimSirasi[a] - tanimSirasi[b])
+  );
+
+  const index = {};
+  sirali.forEach((g, n) => { index[g] = n; });
+  return index;
+})();
+
+// GC'de tanımsız bir grup çıkarsa listenin sonuna düşer (kaybolmaz)
+function grupIndex(g) {
+  return (g in GRUP_INDEX) ? GRUP_INDEX[g] : 9999;
+}
+
+// Kalemleri gruba göre öbekler. Dönen değer: [[grupAdı, [kalem, ...]], ...]
+// Her grup TEK blok; gruplar GRUP_INDEX sırasında, grup içi ürün adına göre.
+function grupla(kalemler) {
+  const gruplar = new Map();
+  kalemler.forEach(it => {
+    const g = it.g || "DİĞER";
+    if (!gruplar.has(g)) gruplar.set(g, []);
+    gruplar.get(g).push(it);
+  });
+
+  return [...gruplar.entries()]
+    .sort((a, b) => (grupIndex(a[0]) - grupIndex(b[0])) || a[0].localeCompare(b[0], "tr"))
+    .map(([g, list]) => [g, list.slice().sort((x, y) => x.a.localeCompare(y.a, "tr"))]);
+}
+
+// Gruplanmış sırayla düz liste (Excel satır sırası da bu olur)
+function grupluSirala(kalemler) {
+  return grupla(kalemler).flatMap(([, list]) => list);
+}
