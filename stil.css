@@ -142,23 +142,22 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .env-tbl .say{text-align:center}
 .env-sat{cursor:pointer;background:#fff}
 .env-sat:hover{background:#f0f7ff}
-.env-sat.acik{background:#eef4fb}
 .env-sat .cikan{font-weight:700;color:#1a6b3c;font-size:14px}
 .env-sat .cikan.sifir{color:#ccc;font-weight:400;font-size:12px}
 .env-sat .bekleyen{color:#b26500;font-weight:600}
-.env-sat .ac{color:#bbb;font-size:15px}
+.env-sat .hrk-say{color:#999;font-size:11px}
+.env-sat .ileri{color:#bbb;font-size:19px}
 
-.env-hareketler{padding:4px 0 8px 6px;border-left:3px solid #2e75b6;margin-left:4px}
-.hrk{display:grid;grid-template-columns:1fr 160px 210px 130px 92px;gap:10px;align-items:center;
-     padding:7px 10px;font-size:12px;background:#fafcff;border-radius:5px;margin-bottom:3px}
-.hrk.bekliyor{background:#fffaf0}
-.hrk-outlet b{color:#1e3a5f}
-.hrk-no{font-family:monospace;font-size:10px;color:#999}
-.hrk-zaman{font-size:11px;color:#777}
-.hrk-zaman b{color:#1a6b3c}
-.hrk-mik{font-weight:700;text-align:right}
-.hrk-mik i{font-style:normal;font-weight:400;font-size:10px;color:#b26500}
-.hrk-durum{font-size:11px;text-align:right;white-space:nowrap}
+/* Ürün hareket ekranındaki özet kutuları */
+.ozet-kutu{display:inline-flex;flex-direction:column;align-items:center;
+           background:#f5f6fa;border:1px solid #e6e6e6;border-radius:8px;padding:7px 15px;min-width:78px}
+.ozet-kutu b{font-size:19px;line-height:1.1;color:#333}
+.ozet-kutu span{font-size:9px;color:#999;letter-spacing:.5px;margin-top:2px}
+.ozet-kutu.cikan{background:#e3f5e8;border-color:#a8d5b8}
+.ozet-kutu.cikan b{color:#1a6b3c}
+.ozet-kutu.bekleyen{background:#fff8e1;border-color:#ffe0a3}
+.ozet-kutu.bekleyen b{color:#b26500}
+.detay-tbl tr.bekleyen-sat{background:#fffaf0}
 
 /* ===== Depo: sipariş detayı ===== */
 .geri{background:none;border:none;color:#1e3a5f;font-size:14px;font-weight:700;
@@ -194,7 +193,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
   .talep-sat{grid-template-columns:1fr auto;gap:5px 10px;font-size:12px}
   .talep-sat .ileri{display:none}
   .detay-bas{flex-direction:column;align-items:stretch}
-  .hrk{grid-template-columns:1fr auto;gap:4px 10px}
-  .hrk-mik,.hrk-durum{text-align:left}
   .env-ara{max-width:none}
+  .env-tbl{font-size:11px}
+  .env-tbl th:nth-child(6),.env-sat td:nth-child(6){display:none}  /* HAREKET sütunu */
 }

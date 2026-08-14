@@ -74,23 +74,29 @@ düzenlenebilir. Değişiklik anında kaydedilir. `0` yazılan ürün verilmedi 
 **📦 KALEM ENVANTERİ** — ürün bazında çıkış kaydı. Kendi **tarih aralığı** seçicisi vardır
 (varsayılan bugün, en fazla 92 gün).
 
-| KOD | ÜRÜN ADI | BR | ÇIKAN | BEKLEYEN |
-|---|---|---|---|---|
-| ICA02000001 | KOLA SISE | kol | **10** | 5 |
+Düz liste, **ürün koduna göre sıralı** — gruplama yok, çünkü envanter yüzlerce satıra
+çıkabilir ve kod sırası LN Infor'la karşılaştırmayı kolaylaştırır.
+
+| KOD | ÜRÜN ADI | BR | ÇIKAN | BEKLEYEN | HAREKET |
+|---|---|---|---|---|---|
+| ICA01000006 | SODA SADE SISE 24 LU | kol | — | 3 | 1 |
+| ICA02000001 | KOLA SISE | kol | **10** | 5 | 3 |
 
 - **ÇIKAN** = onaylanmış siparişlerdeki onay miktarı — depodan gerçekten çıkan mal
 - **BEKLEYEN** = henüz onaylanmamış talepler
 - Verilmedi (`0`) işaretli kalemler envantere hiç girmez
 
-Satıra basınca o ürünün **tek tek hareketleri** açılır:
+Satıra basınca **ayrı bir sayfada** o ürünün bütün hareketleri açılır:
 
-```
-315 PAVILLION BAR   SIP-20260814-007   istendi 14/08 14:32 · çıktı 14/08 15:10   6 kol (10 istendi)  ✅ çıktı
-316 LOBBY BAR       SIP-20260814-008   istendi 14/08 14:32                       5 kol              🟡 bekliyor
-201 ALIBEY REST.    SIP-20260813-001   istendi 13/08 09:15 · çıktı 13/08 10:40   4 kol              ✅ çıktı
-```
+| OUTLET | SİPARİŞ NO | İSTENDİ | ÇIKTI | TALEP | MİKTAR | DURUM |
+|---|---|---|---|---|---|---|
+| **315** PAVILLION BAR | SIP-20260814-007 | 14/08 14:32 | 14/08 15:10 | 10 | **6** | ✅ çıktı |
+| **316** LOBBY BAR | SIP-20260814-008 | 14/08 14:32 | — | 5 | **5** | 🟡 bekliyor |
+| **201** ALIBEY REST. | SIP-20260813-001 | 13/08 09:15 | 13/08 10:40 | 4 | **4** | ✅ çıktı |
 
-Üstteki arama kutusu ürün adı ve koduna göre filtreler.
+Üstte ÇIKAN / BEKLEYEN / HAREKET özet kutuları, altında hareketler yeniden eskiye sıralı.
+Talep ile miktar farklıysa talep sütunu turuncu görünür. Liste ekranındaki arama kutusu
+ürün adı ve koduna göre filtreler.
 
 Talepler listesi 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş günlere bakılır.
 

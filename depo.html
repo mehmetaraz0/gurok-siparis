@@ -68,6 +68,13 @@
     <div id="detayBas"></div>
     <div id="detayIcerik"></div>
   </div>
+
+  <!-- ---- Ekran 3: ürün hareket detayı ---- -->
+  <div id="ekranUrun" style="display:none;padding:12px">
+    <button class="geri" onclick="envanteraDon()">← Envantere dön</button>
+    <div id="urunBas"></div>
+    <div id="urunIcerik"></div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -82,7 +89,7 @@ let SIFRE = null;
 let SIPARISLER = [];            // seçili günün siparişleri (talepler ekranı)
 let ACIK_NO = null;             // detayı açık siparişin numarası (null ise liste ekranı)
 let ENVANTER = null;            // envanter aralığının siparişleri (null = henüz çekilmedi)
-const ENV_ACIK = new Set();     // envanterde detayı açık ürün kodları
+let ACIK_URUN = null;           // hareket detayı açık ürün kodu (null ise liste ekranı)
 let zamanlayici = null;
 
 /* ================= Giriş ================= */
@@ -154,17 +161,20 @@ function siparisBul(no) { return SIPARISLER.find(s => s.siparis_no === no) || nu
 /* ================= Çizim yönlendirici ================= */
 
 function ciz() {
+  if (ACIK_URUN) { cizUrunDetay(); return; }
+
   if (ACIK_NO) {
     const s = siparisBul(ACIK_NO);
     if (!s) { listeyeDon(); return; }   // sipariş kaybolduysa listeye dön
     cizDetay(s);
-  } else {
-    cizSerit();
-    cizTalepler();
-    // Envanter kendi tarih aralığını kullanır; açıksa o da tazelensin
-    if (ENVANTER && document.getElementById("envanter").style.display !== "none") {
-      envanterGetir();
-    }
+    return;
+  }
+
+  cizSerit();
+  cizTalepler();
+  // Envanter kendi tarih aralığını kullanır; açıksa o da tazelensin
+  if (ENVANTER && document.getElementById("envanter").style.display !== "none") {
+    envanterGetir();
   }
 }
 
@@ -275,7 +285,7 @@ async function envanterGetir() {
     });
     if (error) throw error;
     ENVANTER = data || [];
-    cizEnvanter();
+    if (ACIK_URUN) cizUrunDetay(); else cizEnvanter();
   } catch (e) {
     console.error(e);
     ENVANTER = null;
@@ -344,84 +354,112 @@ function cizEnvanter() {
     return;
   }
 
-  // Gruplar bar ekranıyla aynı sırada
-  const gruplar = {};
-  kodlar.forEach(k => {
-    const g = urun[k].g || "DİĞER";
-    (gruplar[g] = gruplar[g] || []).push(k);
-  });
+  // Düz liste, ürün koduna göre sıralı. Gruplama yok: envanter yüzlerce satıra
+  // çıkabilir, kod sırası aramayı ve LN Infor'la karşılaştırmayı kolaylaştırır.
+  kodlar.sort((a, b) => a.localeCompare(b, "en"));
 
   let h = '<table class="env-tbl"><thead><tr>'
-        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BR</th><th>ÇIKAN</th><th>BEKLEYEN</th><th></th>'
+        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BR</th><th>ÇIKAN</th><th>BEKLEYEN</th>'
+        + '<th>HAREKET</th><th></th>'
         + '</tr></thead><tbody>';
 
-  Object.keys(gruplar)
-    .sort((a, b) => (grupIndex(a) - grupIndex(b)) || a.localeCompare(b, "tr"))
-    .forEach(g => {
-      h += '<tr class="env-grp-sat"><td colspan="6"><div class="depo-grp">'
-         + htmlEsc(g) + ' (' + gruplar[g].length + ' kalem)</div></td></tr>';
-
-      gruplar[g].sort((a, b) => urun[a].a.localeCompare(urun[b].a, "tr"));
-      gruplar[g].forEach(k => {
-        const u = urun[k];
-        const acik = ENV_ACIK.has(k);
-
-        h += '<tr class="env-sat' + (acik ? " acik" : "") + '"'
-           + ' data-ara="' + htmlEsc((u.a + " " + u.k).toLowerCase()) + '"'
-           + ' onclick="envDetayAcKapa(\'' + htmlEsc(k) + '\')">'
-           + '<td style="font-family:monospace;font-size:10px">' + htmlEsc(k) + '</td>'
-           + '<td>' + htmlEsc(u.a) + '</td>'
-           + '<td style="text-align:center">' + htmlEsc(u.b) + '</td>'
-           + '<td class="say cikan' + (u.cikan ? "" : " sifir") + '">' + (u.cikan || "—") + '</td>'
-           + '<td class="say bekleyen">' + (u.bekleyen || "—") + '</td>'
-           + '<td class="say"><span class="ac">' + (acik ? "▴" : "▾") + '</span></td>'
-           + '</tr>';
-
-        if (acik) {
-          h += '<tr class="env-detay-sat" data-ara="' + htmlEsc((u.a + " " + u.k).toLowerCase()) + '">'
-             + '<td colspan="6"><div class="env-hareketler">';
-          u.hareketler.forEach(hr => {
-            h += '<div class="hrk' + (hr.onayli ? "" : " bekliyor") + '">'
-               + '<span class="hrk-outlet"><b>' + htmlEsc(hr.outlet_kod.slice(3)) + '</b> '
-               + htmlEsc(hr.outlet_ad) + '</span>'
-               + '<span class="hrk-no">' + htmlEsc(hr.siparis_no) + '</span>'
-               + '<span class="hrk-zaman">istendi ' + tarihSaat(hr.istendi)
-               + (hr.onayli && hr.cikti ? ' · <b>çıktı ' + tarihSaat(hr.cikti) + '</b>' : '')
-               + '</span>'
-               + '<span class="hrk-mik">' + hr.miktar + ' ' + htmlEsc(u.b)
-               + (hr.talep !== hr.miktar ? ' <i>(' + hr.talep + ' istendi)</i>' : '')
-               + '</span>'
-               + '<span class="hrk-durum">' + (hr.onayli ? "✅ çıktı" : "🟡 bekliyor") + '</span>'
-               + '</div>';
-          });
-          h += '</div></td></tr>';
-        }
-      });
-    });
+  kodlar.forEach(k => {
+    const u = urun[k];
+    h += '<tr class="env-sat" data-ara="' + htmlEsc((u.a + " " + u.k).toLowerCase()) + '"'
+       + ' onclick="urunAc(\'' + htmlEsc(k) + '\')">'
+       + '<td style="font-family:monospace;font-size:11px">' + htmlEsc(k) + '</td>'
+       + '<td>' + htmlEsc(u.a) + '</td>'
+       + '<td style="text-align:center">' + htmlEsc(u.b) + '</td>'
+       + '<td class="say cikan' + (u.cikan ? "" : " sifir") + '">' + (u.cikan || "—") + '</td>'
+       + '<td class="say bekleyen">' + (u.bekleyen || "—") + '</td>'
+       + '<td class="say hrk-say">' + u.hareketler.length + '</td>'
+       + '<td class="say"><span class="ileri">›</span></td>'
+       + '</tr>';
+  });
 
   kutu.innerHTML = h + '</tbody></table>';
   envFiltre(document.getElementById("envAra").value);
 }
 
-function envDetayAcKapa(kod) {
-  if (ENV_ACIK.has(kod)) ENV_ACIK.delete(kod); else ENV_ACIK.add(kod);
-  cizEnvanter();
-}
-
 function envFiltre(t) {
   t = (t || "").toLowerCase().trim();
+  let gorunen = 0;
   document.querySelectorAll("#envIcerik tr[data-ara]").forEach(tr => {
-    tr.style.display = (!t || tr.dataset.ara.includes(t)) ? "" : "none";
+    const uygun = !t || tr.dataset.ara.includes(t);
+    tr.style.display = uygun ? "" : "none";
+    if (uygun) gorunen++;
   });
-  // Ürünü kalmayan grup başlığını gizle
-  document.querySelectorAll("#envIcerik tr.env-grp-sat").forEach(gs => {
-    let n = gs.nextElementSibling, gorunur = false;
-    while (n && !n.classList.contains("env-grp-sat")) {
-      if (n.style.display !== "none") gorunur = true;
-      n = n.nextElementSibling;
-    }
-    gs.style.display = gorunur ? "" : "none";
+  if (t) document.getElementById("envCount").textContent = gorunen + " kalem (filtreli)";
+}
+
+/* ---- Ekran 3: bir ürünün hareketleri ---- */
+
+function urunAc(kod) {
+  ACIK_URUN = kod;
+  document.getElementById("ekranListe").style.display = "none";
+  document.getElementById("ekranUrun").style.display = "";
+  window.scrollTo(0, 0);
+  ciz();
+}
+
+function envanteraDon() {
+  ACIK_URUN = null;
+  document.getElementById("ekranUrun").style.display = "none";
+  document.getElementById("ekranListe").style.display = "";
+  document.getElementById("hdrBaslik").textContent = "DEPO — GELEN TALEPLER";
+  window.scrollTo(0, 0);
+  ciz();
+}
+
+function cizUrunDetay() {
+  const { urun } = envanterTopla();
+  const u = urun[ACIK_URUN];
+
+  if (!u) {                       // aralık değiştiyse ürün listeden düşmüş olabilir
+    document.getElementById("urunBas").innerHTML = "";
+    document.getElementById("urunIcerik").innerHTML =
+      '<div class="em">Bu ürünün seçili tarih aralığında hareketi yok.</div>';
+    return;
+  }
+
+  document.getElementById("hdrBaslik").textContent = "DEPO — " + u.a;
+
+  const bas = document.getElementById("envBas").value || bugun();
+  const bit = document.getElementById("envBit").value || bugun();
+
+  document.getElementById("urunBas").innerHTML =
+      '<div class="detay-bas">'
+    + '<div>'
+    + '<div class="dno">' + htmlEsc(u.k) + '</div>'
+    + '<div class="dbar">' + htmlEsc(u.a) + ' &nbsp;·&nbsp; ' + htmlEsc(u.b)
+    + ' &nbsp;·&nbsp; ' + htmlEsc(bas) + ' — ' + htmlEsc(bit) + '</div>'
+    + '</div>'
+    + '<div class="detay-btn">'
+    + '<span class="ozet-kutu cikan"><b>' + u.cikan + '</b><span>ÇIKAN</span></span>'
+    + '<span class="ozet-kutu bekleyen"><b>' + u.bekleyen + '</b><span>BEKLEYEN</span></span>'
+    + '<span class="ozet-kutu"><b>' + u.hareketler.length + '</b><span>HAREKET</span></span>'
+    + '</div></div>';
+
+  let h = '<table class="detay-tbl"><thead><tr>'
+        + '<th>OUTLET</th><th>SİPARİŞ NO</th><th>İSTENDİ</th><th>ÇIKTI</th>'
+        + '<th>TALEP</th><th>MİKTAR</th><th>DURUM</th>'
+        + '</tr></thead><tbody>';
+
+  u.hareketler.forEach(hr => {
+    h += '<tr class="' + (hr.onayli ? "" : "bekleyen-sat") + '">'
+       + '<td><b>' + htmlEsc(hr.outlet_kod.slice(3)) + '</b> ' + htmlEsc(hr.outlet_ad) + '</td>'
+       + '<td style="font-family:monospace;font-size:10px">' + htmlEsc(hr.siparis_no) + '</td>'
+       + '<td style="white-space:nowrap">' + tarihSaat(hr.istendi) + '</td>'
+       + '<td style="white-space:nowrap">' + (hr.onayli ? tarihSaat(hr.cikti) : "—") + '</td>'
+       + '<td style="text-align:center' + (hr.talep !== hr.miktar ? ';color:#b26500' : '') + '">'
+       + hr.talep + '</td>'
+       + '<td style="text-align:center;font-weight:700;font-size:14px">' + hr.miktar + '</td>'
+       + '<td>' + (hr.onayli ? '<span class="rz onay">✅ çıktı</span>'
+                             : '<span class="rz talep">🟡 bekliyor</span>') + '</td>'
+       + '</tr>';
   });
+
+  document.getElementById("urunIcerik").innerHTML = h + '</tbody></table>';
 }
 
 /* ================= Ekran 2: sipariş detayı ================= */
