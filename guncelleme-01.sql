@@ -15,11 +15,20 @@ alter table public.siparisler add column if not exists onay_saati  timestamptz;
 -- Gün + outlet tekilliği kalkıyor: bir bar günde birden çok sipariş gönderebilir.
 alter table public.siparisler drop constraint if exists siparisler_tarih_outlet_kod_key;
 
--- Eski kayıtlara (varsa) numara üret
-update public.siparisler
-   set siparis_no = 'SIP-' || to_char(tarih, 'YYYYMMDD') || '-'
-                 || lpad(row_number() over (partition by tarih order by gonderilme_saati)::text, 3, '0')
- where siparis_no is null;
+-- Eski kayıtlara (varsa) numara üret.
+-- row_number() doğrudan UPDATE ... SET içinde kullanılamaz (42P20),
+-- bu yüzden numaralar önce alt sorguda üretilip id üzerinden eşleştiriliyor.
+update public.siparisler s
+   set siparis_no = n.yeni_no
+  from (
+    select id,
+           'SIP-' || to_char(tarih, 'YYYYMMDD') || '-'
+        || lpad(row_number() over (partition by tarih order by gonderilme_saati)::text, 3, '0')
+             as yeni_no
+      from public.siparisler
+     where siparis_no is null
+  ) n
+ where s.id = n.id;
 
 create unique index if not exists siparisler_no_idx on public.siparisler (siparis_no);
 
@@ -165,14 +174,17 @@ begin
   if not found then raise exception 'Siparis bulunamadi'; end if;
   if v_durum = 'onaylandi' then raise exception 'Siparis kilitli, once kilidi acin'; end if;
 
+  -- with ordinality + order by: kalem sırası korunur.
+  -- Sıra önemli, çünkü Excel satırları bu sırayla yazılıyor.
   update siparisler
      set kalemler = (
            select jsonb_agg(
                     case when el->>'k' = p_kalem_kod
                          then el || jsonb_build_object('o', p_onay)
                          else el end
+                    order by ord
                   )
-             from jsonb_array_elements(kalemler) el
+             from jsonb_array_elements(kalemler) with ordinality as t(el, ord)
          )
    where siparis_no = p_siparis_no;
 
