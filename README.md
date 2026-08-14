@@ -53,8 +53,17 @@ Mutfak personeli koduna **M** ekler: `M201`, `M204`, `M202`. Bar `201` ile mutfa
 gönderir ve depoda ayrı numarayla, mor bir bölüm etiketiyle görünür — kahvaltının siparişi
 pastanenin siparişine karışmaz. Tek bölümlü mutfak (M202) seçim ekranını atlar.
 
-Mutfak listelerinde ürün grubu yoktur; sıra Excel dosyasındaki sırayla aynıdır. Aynı listeyi
-kullanan M201 ve M204'ün taslakları ve siparişleri birbirinden bağımsızdır.
+Mutfak listeleri **kategorilere** ayrılır — PEYNİRLER, SÜT & YOĞURT, ŞARKÜTERİ & ET,
+DENİZ ÜRÜNLERİ, ŞOKLU & DONUK, UN & HAMUR İŞİ, KURU GIDA & BAKLİYAT, YAĞLAR, ZEYTİNLER,
+KONSERVE & SALÇA, BAHARAT & SOS, REÇEL & TAHİN, PASTANE MALZEMESİ, DONDURMA, İÇECEK,
+ELDİVEN & SAĞLIK, AMBALAJ & FOLYO, PEÇETE & SERVİS, KIRTASİYE.
+
+Kategori, ürün kodunun ilk beş hanesinden türetilir (`YIY03` → PEYNİRLER). Tek istisna
+`YIY11`: 149 kalemle çok büyük ve içi karışık olduğu için ürün adına bakılarak dörde
+ayrılır. LN Infor adlandırması "ANA ÜRÜN + detay" olduğundan ilk kelime belirleyicidir —
+`YAG ZEYTIN SIZMA` yağlara, `ZEYTIN YESIL KIRMA` zeytinlere gider.
+
+Aynı listeyi kullanan M201 ve M204'ün taslakları ve siparişleri birbirinden bağımsızdır.
 
 **Henüz eklenmedi** — ürün listesi geldiğinde eklenecek:
 `CMM201 → SAHİL KAHVALTI`, `CMM201 → SAHİL PIZZA`, `CMM203 Personel Mutfağı`,
