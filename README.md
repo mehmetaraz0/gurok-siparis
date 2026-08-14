@@ -71,10 +71,28 @@ Satıra tıklanınca **sipariş detayı** açılır: her kalem bir satır, **ONA
 düzenlenebilir. Değişiklik anında kaydedilir. `0` yazılan ürün verilmedi sayılır —
 üstü çizilir, Excel'e ve konsolide toplama girmez.
 
-**📊 KONSOLİDE TOPLAM** — ürün bazında toplama listesi, onaylanmış miktarlarla.
-Aynı barın birden çok siparişi tek satırda toplanır.
+**📦 KALEM ENVANTERİ** — ürün bazında çıkış kaydı. Kendi **tarih aralığı** seçicisi vardır
+(varsayılan bugün, en fazla 92 gün).
 
-Liste 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş günlere bakılır.
+| KOD | ÜRÜN ADI | BR | ÇIKAN | BEKLEYEN |
+|---|---|---|---|---|
+| ICA02000001 | KOLA SISE | kol | **10** | 5 |
+
+- **ÇIKAN** = onaylanmış siparişlerdeki onay miktarı — depodan gerçekten çıkan mal
+- **BEKLEYEN** = henüz onaylanmamış talepler
+- Verilmedi (`0`) işaretli kalemler envantere hiç girmez
+
+Satıra basınca o ürünün **tek tek hareketleri** açılır:
+
+```
+315 PAVILLION BAR   SIP-20260814-007   istendi 14/08 14:32 · çıktı 14/08 15:10   6 kol (10 istendi)  ✅ çıktı
+316 LOBBY BAR       SIP-20260814-008   istendi 14/08 14:32                       5 kol              🟡 bekliyor
+201 ALIBEY REST.    SIP-20260813-001   istendi 13/08 09:15 · çıktı 13/08 10:40   4 kol              ✅ çıktı
+```
+
+Üstteki arama kutusu ürün adı ve koduna göre filtreler.
+
+Talepler listesi 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş günlere bakılır.
 
 ## Dosyalar
 
@@ -89,6 +107,7 @@ Liste 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş günlere bakıl
 | `config.js` | Supabase adresi ve anon key |
 | `kurulum.sql` | İlk kurulum — bir kez |
 | `guncelleme-01.sql` | Sipariş no + depo düzeltme/onay — bir kez |
+| `guncelleme-02.sql` | Kalem envanteri (tarih aralığı sorgusu) — bir kez |
 
 Excel üretimi `ortak.js` içinde tek `buildExcelBlob()` fonksiyonundadır. Eski tek dosyalık
 sürümde aynı kurgu iki ayrı kopya halindeydi; artık bar da depo da aynı kodu çağırır.
@@ -101,6 +120,7 @@ Supabase panelinde **SQL Editor → New query**, sırayla:
 
 1. `kurulum.sql` — içindeki `BURAYA_SIFRE_YAZ` yerine depo şifreni yaz → **Run**
 2. `guncelleme-01.sql` → **Run**  *(şifreni değiştirmez, mevcut veriyi korur)*
+3. `guncelleme-02.sql` → **Run**  *(kalem envanteri için `depo_envanter` fonksiyonu)*
 
 Şifreyi sonra değiştirmek için `kurulum.sql` içindeki `insert into public.ayarlar ...`
 satırını yeni şifreyle tekrar çalıştırman yeterli.
@@ -120,6 +140,7 @@ Korumayı veritabanı sağlar:
 - Tüm erişim `SECURITY DEFINER` fonksiyonlarından geçer:
   - `siparis_gonder` — bar sipariş yazar, numara üretilir (outlet kodu ve kalem listesi doğrulanır)
   - `depo_liste` — şifre doğruysa o günün siparişlerini döner
+  - `depo_envanter` — şifre doğruysa tarih aralığındaki siparişleri döner (en fazla 92 gün)
   - `depo_kalem_guncelle` — şifre ister, kilitli siparişte çalışmaz
   - `depo_durum_degistir` — onaylar / kilidi açar
 - Depo şifresi bcrypt ile saklanır, doğrulama sunucuda yapılır.

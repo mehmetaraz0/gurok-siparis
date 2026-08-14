@@ -40,17 +40,25 @@
 
     <div class="sekmeler">
       <button class="sk aktif" id="skTalep" onclick="sekmeGec('talep')">📋 TALEPLER</button>
-      <button class="sk" id="skKons" onclick="sekmeGec('kons')">📊 KONSOLİDE TOPLAM</button>
+      <button class="sk" id="skEnv" onclick="sekmeGec('env')">📦 KALEM ENVANTERİ</button>
     </div>
 
     <div id="talepler"></div>
 
-    <div id="konsolide" style="display:none">
-      <div class="depo-header">
-        <span>KONSOLİDE — onaylanmış miktarlarla</span>
-        <span class="depo-count" id="depoCount">0 kalem</span>
+    <div id="envanter" style="display:none">
+      <div class="env-arac">
+        <label>Başlangıç <input type="date" id="envBas"></label>
+        <label>Bitiş <input type="date" id="envBit"></label>
+        <button class="db" onclick="envanterGetir()">Getir</button>
+        <span class="env-hazir" id="envHazir"></span>
+        <input class="sb env-ara" id="envAra" placeholder="Ürün ara..." oninput="envFiltre(this.value)">
       </div>
-      <div id="depoContent"></div>
+
+      <div class="depo-header">
+        <span>ÜRÜN ÇIKIŞ KAYDI — satıra basınca hangi outlet, ne zaman, kaç adet</span>
+        <span class="depo-count" id="envCount">0 kalem</span>
+      </div>
+      <div id="envIcerik"><div class="em">Tarih aralığı seçip <b>Getir</b>'e basın.</div></div>
     </div>
   </div>
 
@@ -71,8 +79,10 @@
 /* ================= Durum ================= */
 
 let SIFRE = null;
-let SIPARISLER = [];      // seçili günün siparişleri
-let ACIK_NO = null;       // detayı açık siparişin numarası (null ise liste ekranı)
+let SIPARISLER = [];            // seçili günün siparişleri (talepler ekranı)
+let ACIK_NO = null;             // detayı açık siparişin numarası (null ise liste ekranı)
+let ENVANTER = null;            // envanter aralığının siparişleri (null = henüz çekilmedi)
+const ENV_ACIK = new Set();     // envanterde detayı açık ürün kodları
 let zamanlayici = null;
 
 /* ================= Giriş ================= */
@@ -118,6 +128,8 @@ function basla() {
   document.getElementById("kilit").style.display = "none";
   document.getElementById("ana").style.display = "";
   document.getElementById("tarih").value = bugun();
+  document.getElementById("envBas").value = bugun();
+  document.getElementById("envBit").value = bugun();
   yenile();
   zamanlayici = setInterval(yenile, 15000);
 }
@@ -149,7 +161,10 @@ function ciz() {
   } else {
     cizSerit();
     cizTalepler();
-    cizKonsolide();
+    // Envanter kendi tarih aralığını kullanır; açıksa o da tazelensin
+    if (ENVANTER && document.getElementById("envanter").style.display !== "none") {
+      envanterGetir();
+    }
   }
 }
 
@@ -157,10 +172,13 @@ function ciz() {
 
 function sekmeGec(hangi) {
   const t = hangi === "talep";
-  document.getElementById("talepler").style.display   = t ? "" : "none";
-  document.getElementById("konsolide").style.display  = t ? "none" : "";
+  document.getElementById("talepler").style.display = t ? "" : "none";
+  document.getElementById("envanter").style.display = t ? "none" : "";
   document.getElementById("skTalep").classList.toggle("aktif", t);
-  document.getElementById("skKons").classList.toggle("aktif", !t);
+  document.getElementById("skEnv").classList.toggle("aktif", !t);
+
+  // Envanter ilk açılışta kendiliğinden dolsun (boş ekran karşılamasın)
+  if (!t && !ENVANTER) envanterGetir();
 }
 
 // Hangi barın gönderdiği zaten talep listesinde görünüyor; burada sadece
@@ -238,62 +256,172 @@ function cizTalepler() {
   k.innerHTML = h;
 }
 
-function cizKonsolide() {
-  const dc = document.getElementById("depoContent");
-  const dcount = document.getElementById("depoCount");
+/* ================= Kalem envanteri =================
+   Ürün bazında çıkış kaydı. ÇIKAN = onaylanmış siparişlerdeki onay miktarı
+   (depodan gerçekten çıkan mal). BEKLEYEN = henüz onaylanmamış talepler.
+   Satıra basılınca o ürünün tek tek hareketleri açılır. */
 
-  // Onaylanan miktarlar geçerli; verilmeyen (0) kalemler toplama girmez.
-  const toplam = {};
-  SIPARISLER.forEach(s => {
+async function envanterGetir() {
+  const bas = document.getElementById("envBas").value || bugun();
+  const bit = document.getElementById("envBit").value || bugun();
+  const kutu = document.getElementById("envIcerik");
+
+  kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
+  document.getElementById("envHazir").textContent = "";
+
+  try {
+    const { data, error } = await SB.rpc("depo_envanter", {
+      p_sifre: SIFRE, p_bas: bas, p_bit: bit
+    });
+    if (error) throw error;
+    ENVANTER = data || [];
+    cizEnvanter();
+  } catch (e) {
+    console.error(e);
+    ENVANTER = null;
+    kutu.innerHTML = '<div class="em">⚠ Envanter alınamadı: '
+                   + htmlEsc(e.message || "bağlantı hatası") + '</div>';
+  }
+}
+
+// Siparişleri ürün bazında toplar
+function envanterTopla() {
+  const urun = {};
+  let siparisSayisi = 0, hareketSayisi = 0;
+
+  (ENVANTER || []).forEach(s => {
+    siparisSayisi++;
+    const onayli = s.durum === "onaylandi";
+
     s.kalemler.forEach(it => {
-      const m = gecerliMiktar(it);
-      if (m <= 0) return;
-      if (!toplam[it.k]) toplam[it.k] = { a: it.a, b: it.b, g: it.g, outlets: {}, total: 0 };
-      const ok = s.outlet_kod;
-      toplam[it.k].outlets[ok] = (toplam[it.k].outlets[ok] || 0) + m;
-      toplam[it.k].total += m;
+      const miktar = gecerliMiktar(it);
+      if (miktar <= 0) return;              // verilmedi işaretli kalem
+
+      if (!urun[it.k]) {
+        urun[it.k] = { k: it.k, a: it.a, b: it.b, g: it.g,
+                       cikan: 0, bekleyen: 0, hareketler: [] };
+      }
+      const u = urun[it.k];
+      if (onayli) u.cikan += miktar; else u.bekleyen += miktar;
+
+      u.hareketler.push({
+        siparis_no: s.siparis_no,
+        outlet_kod: s.outlet_kod,
+        outlet_ad:  s.outlet_ad,
+        istendi:    s.gonderilme_saati,
+        cikti:      s.onay_saati,
+        talep:      it.m,
+        miktar:     miktar,
+        onayli:     onayli
+      });
+      hareketSayisi++;
     });
   });
 
-  const codes = Object.keys(toplam);
-  dcount.textContent = codes.length + " kalem";
+  Object.values(urun).forEach(u =>
+    u.hareketler.sort((a, b) => new Date(b.istendi) - new Date(a.istendi)));
 
-  if (!codes.length) {
-    dc.innerHTML = '<div class="em">Toplanacak kalem yok.</div>';
+  return { urun, siparisSayisi, hareketSayisi };
+}
+
+function cizEnvanter() {
+  const kutu = document.getElementById("envIcerik");
+  const { urun, siparisSayisi, hareketSayisi } = envanterTopla();
+  const kodlar = Object.keys(urun);
+
+  document.getElementById("envCount").textContent = kodlar.length + " kalem";
+  document.getElementById("envHazir").textContent =
+    siparisSayisi + " sipariş · " + hareketSayisi + " hareket";
+
+  if (!kodlar.length) {
+    // Boşsa nedenini söyle — sessiz boş ekran bırakma
+    kutu.innerHTML = '<div class="em">'
+      + (siparisSayisi === 0
+          ? "Bu tarih aralığında hiç sipariş yok."
+          : siparisSayisi + " sipariş bulundu, ama hiçbirinde çıkacak kalem yok "
+            + "(tüm kalemler 0 / verilmedi işaretli).")
+      + '</div>';
     return;
   }
 
-  const groups = {};
-  codes.forEach(k => {
-    const g = toplam[k].g || "DİĞER";
-    (groups[g] = groups[g] || []).push(k);
+  // Gruplar bar ekranıyla aynı sırada
+  const gruplar = {};
+  kodlar.forEach(k => {
+    const g = urun[k].g || "DİĞER";
+    (gruplar[g] = gruplar[g] || []).push(k);
   });
 
-  let h = '<table class="depo-tbl"><thead><tr>'
-        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BİRİM</th><th>TOPLAM</th><th>OUTLET DETAY</th>'
+  let h = '<table class="env-tbl"><thead><tr>'
+        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BR</th><th>ÇIKAN</th><th>BEKLEYEN</th><th></th>'
         + '</tr></thead><tbody>';
 
-  // Grup sırası bar ekranıyla aynı (ortak.js → GRUP_INDEX)
-  Object.keys(groups)
+  Object.keys(gruplar)
     .sort((a, b) => (grupIndex(a) - grupIndex(b)) || a.localeCompare(b, "tr"))
     .forEach(g => {
-    h += '<tr><td colspan="5"><div class="depo-grp">' + htmlEsc(g)
-       + ' (' + groups[g].length + ' kalem)</div></td></tr>';
-    groups[g].sort((a, b) => toplam[a].a.localeCompare(toplam[b].a, "tr"));
-    groups[g].forEach(k => {
-      const it = toplam[k];
-      const detay = Object.entries(it.outlets).map(([oc, m]) => oc.slice(3) + ":" + m).join(", ");
-      h += '<tr>'
-         + '<td style="font-family:monospace;font-size:10px">' + htmlEsc(k) + '</td>'
-         + '<td>' + htmlEsc(it.a) + '</td>'
-         + '<td style="text-align:center">' + htmlEsc(it.b) + '</td>'
-         + '<td style="text-align:center;font-weight:700;color:#c00000;font-size:14px">' + it.total + '</td>'
-         + '<td class="outlet-cell">' + htmlEsc(detay) + '</td>'
-         + '</tr>';
-    });
-  });
+      h += '<tr class="env-grp-sat"><td colspan="6"><div class="depo-grp">'
+         + htmlEsc(g) + ' (' + gruplar[g].length + ' kalem)</div></td></tr>';
 
-  dc.innerHTML = h + '</tbody></table>';
+      gruplar[g].sort((a, b) => urun[a].a.localeCompare(urun[b].a, "tr"));
+      gruplar[g].forEach(k => {
+        const u = urun[k];
+        const acik = ENV_ACIK.has(k);
+
+        h += '<tr class="env-sat' + (acik ? " acik" : "") + '"'
+           + ' data-ara="' + htmlEsc((u.a + " " + u.k).toLowerCase()) + '"'
+           + ' onclick="envDetayAcKapa(\'' + htmlEsc(k) + '\')">'
+           + '<td style="font-family:monospace;font-size:10px">' + htmlEsc(k) + '</td>'
+           + '<td>' + htmlEsc(u.a) + '</td>'
+           + '<td style="text-align:center">' + htmlEsc(u.b) + '</td>'
+           + '<td class="say cikan' + (u.cikan ? "" : " sifir") + '">' + (u.cikan || "—") + '</td>'
+           + '<td class="say bekleyen">' + (u.bekleyen || "—") + '</td>'
+           + '<td class="say"><span class="ac">' + (acik ? "▴" : "▾") + '</span></td>'
+           + '</tr>';
+
+        if (acik) {
+          h += '<tr class="env-detay-sat" data-ara="' + htmlEsc((u.a + " " + u.k).toLowerCase()) + '">'
+             + '<td colspan="6"><div class="env-hareketler">';
+          u.hareketler.forEach(hr => {
+            h += '<div class="hrk' + (hr.onayli ? "" : " bekliyor") + '">'
+               + '<span class="hrk-outlet"><b>' + htmlEsc(hr.outlet_kod.slice(3)) + '</b> '
+               + htmlEsc(hr.outlet_ad) + '</span>'
+               + '<span class="hrk-no">' + htmlEsc(hr.siparis_no) + '</span>'
+               + '<span class="hrk-zaman">istendi ' + tarihSaat(hr.istendi)
+               + (hr.onayli && hr.cikti ? ' · <b>çıktı ' + tarihSaat(hr.cikti) + '</b>' : '')
+               + '</span>'
+               + '<span class="hrk-mik">' + hr.miktar + ' ' + htmlEsc(u.b)
+               + (hr.talep !== hr.miktar ? ' <i>(' + hr.talep + ' istendi)</i>' : '')
+               + '</span>'
+               + '<span class="hrk-durum">' + (hr.onayli ? "✅ çıktı" : "🟡 bekliyor") + '</span>'
+               + '</div>';
+          });
+          h += '</div></td></tr>';
+        }
+      });
+    });
+
+  kutu.innerHTML = h + '</tbody></table>';
+  envFiltre(document.getElementById("envAra").value);
+}
+
+function envDetayAcKapa(kod) {
+  if (ENV_ACIK.has(kod)) ENV_ACIK.delete(kod); else ENV_ACIK.add(kod);
+  cizEnvanter();
+}
+
+function envFiltre(t) {
+  t = (t || "").toLowerCase().trim();
+  document.querySelectorAll("#envIcerik tr[data-ara]").forEach(tr => {
+    tr.style.display = (!t || tr.dataset.ara.includes(t)) ? "" : "none";
+  });
+  // Ürünü kalmayan grup başlığını gizle
+  document.querySelectorAll("#envIcerik tr.env-grp-sat").forEach(gs => {
+    let n = gs.nextElementSibling, gorunur = false;
+    while (n && !n.classList.contains("env-grp-sat")) {
+      if (n.style.display !== "none") gorunur = true;
+      n = n.nextElementSibling;
+    }
+    gs.style.display = gorunur ? "" : "none";
+  });
 }
 
 /* ================= Ekran 2: sipariş detayı ================= */

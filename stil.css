@@ -125,6 +125,41 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .rz.talep{background:#fff8e1;color:#b26500;border:1px solid #ffe0a3}
 .rz.onay{background:#e3f5e8;color:#1a6b3c;border:1px solid #a8d5b8}
 
+/* ===== Depo: kalem envanteri ===== */
+.env-arac{background:#fff;border-radius:8px;padding:12px 14px;margin-bottom:10px;
+          box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;align-items:center;
+          gap:10px;flex-wrap:wrap}
+.env-arac label{font-size:12px;color:#777;font-weight:600;display:flex;align-items:center;gap:6px}
+.env-arac input[type=date]{padding:7px 9px;border:2px solid #ddd;border-radius:7px;font-size:13px}
+.env-arac input[type=date]:focus{border-color:#2e75b6;outline:none}
+.env-hazir{font-size:12px;color:#888}
+.env-ara{flex:1;min-width:180px;margin:0 !important;max-width:280px}
+
+.env-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.env-tbl th{background:#1a1a1a;color:#fff;padding:8px;text-align:left;font-size:11px;
+            position:sticky;top:0;z-index:2}
+.env-tbl td{padding:7px 9px;border-bottom:1px solid #f0f0f0}
+.env-tbl .say{text-align:center}
+.env-sat{cursor:pointer;background:#fff}
+.env-sat:hover{background:#f0f7ff}
+.env-sat.acik{background:#eef4fb}
+.env-sat .cikan{font-weight:700;color:#1a6b3c;font-size:14px}
+.env-sat .cikan.sifir{color:#ccc;font-weight:400;font-size:12px}
+.env-sat .bekleyen{color:#b26500;font-weight:600}
+.env-sat .ac{color:#bbb;font-size:15px}
+
+.env-hareketler{padding:4px 0 8px 6px;border-left:3px solid #2e75b6;margin-left:4px}
+.hrk{display:grid;grid-template-columns:1fr 160px 210px 130px 92px;gap:10px;align-items:center;
+     padding:7px 10px;font-size:12px;background:#fafcff;border-radius:5px;margin-bottom:3px}
+.hrk.bekliyor{background:#fffaf0}
+.hrk-outlet b{color:#1e3a5f}
+.hrk-no{font-family:monospace;font-size:10px;color:#999}
+.hrk-zaman{font-size:11px;color:#777}
+.hrk-zaman b{color:#1a6b3c}
+.hrk-mik{font-weight:700;text-align:right}
+.hrk-mik i{font-style:normal;font-weight:400;font-size:10px;color:#b26500}
+.hrk-durum{font-size:11px;text-align:right;white-space:nowrap}
+
 /* ===== Depo: sipariş detayı ===== */
 .geri{background:none;border:none;color:#1e3a5f;font-size:14px;font-weight:700;
       cursor:pointer;padding:6px 0;margin-bottom:10px}
@@ -159,4 +194,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
   .talep-sat{grid-template-columns:1fr auto;gap:5px 10px;font-size:12px}
   .talep-sat .ileri{display:none}
   .detay-bas{flex-direction:column;align-items:stretch}
+  .hrk{grid-template-columns:1fr auto;gap:4px 10px}
+  .hrk-mik,.hrk-durum{text-align:left}
+  .env-ara{max-width:none}
 }

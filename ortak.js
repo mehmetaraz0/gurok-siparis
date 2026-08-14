@@ -42,6 +42,14 @@ function saat(ts) {
   });
 }
 
+// "14.08 09:15" — envanterde birden çok güne bakıldığı için gün de gerekli
+function tarihSaat(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  return d.toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul", day: "2-digit", month: "2-digit" })
+       + " " + saat(ts);
+}
+
 /* ---------- Onaylanan miktar ---------- */
 
 // Bir kalemin Excel'e girecek miktarı.
