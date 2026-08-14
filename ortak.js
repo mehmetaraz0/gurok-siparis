@@ -22,13 +22,17 @@ function xmlEsc(s) {
     .replace(/>/g, "&gt;");
 }
 
-// HTML'e basılacak metni kaçışlar.
+// HTML'e basılacak metni kaçışlar. Tek tırnak da kaçışlanır; ama inline
+// onclick gibi bir yerde tek başına yeterli DEĞİLDİR (tarayıcı entity'yi JS
+// ayrıştırmasından önce çözer), o yüzden dinamik değerler onclick string'ine
+// gömülmez — data-* + addEventListener kullanılır.
 function htmlEsc(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // Tarayıcı saat dilimine bakmaksızın Türkiye tarihi (YYYY-AA-GG).

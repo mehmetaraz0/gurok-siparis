@@ -65,9 +65,18 @@
 <script>
 /* ================= Durum ================= */
 
-let Q = {};         // outletKod -> {kalemKod: miktar}
-let C = null;       // seçili outlet
-let kirli = false;  // gönderilmemiş değişiklik var mı
+let Q = {};          // outletKod -> {kalemKod: miktar}
+let C = null;        // seçili outlet
+let kirli = false;   // gönderilmemiş değişiklik var mı
+let siparisId = null; // idempotency: bu sipariş denemesinin istemci kimliği
+
+// Bir gönderim denemesi için benzersiz kimlik. Ağ koparsa aynı kimlikle tekrar
+// gönderilir; sunucu ikinci siparişi açmaz, ilkini döndürür.
+function yeniSiparisId() {
+  return (crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Date.now() + "-" + Math.random().toString(16).slice(2);
+}
 
 /* ================= Kod ile giriş =================
    Bar   : CSM315 → "315"   (üç hane)
@@ -142,6 +151,7 @@ async function mutfakBolumAc(m, bolum) {
 
 async function birimAc(birim) {
   C = birim;
+  siparisId = null;   // yeni birim = yeni sipariş denemesi
   if (!Q[anahtar()]) Q[anahtar()] = {};
 
   document.getElementById("kilit").style.display = "none";
@@ -407,14 +417,19 @@ async function gonder() {
   b.disabled = true;
   b.textContent = "⏳ Gönderiliyor...";
 
+  // Aynı denemenin tekrarı aynı kimliği taşısın; yeni deneme yeni kimlik alır.
+  if (!siparisId) siparisId = yeniSiparisId();
+
   try {
     const { data, error } = await SB.rpc("siparis_gonder", {
-      p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler, p_bolum: C.bl
+      p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler,
+      p_bolum: C.bl, p_istemci_id: siparisId
     });
     if (error) throw error;
 
     // Gönderim başarılı: makbuza yaz, ekranı sıfırla
     makbuzEkle(anahtar(), { no: data.siparis_no, saat: data.saat, kalem: data.kalem });
+    siparisId = null;   // başarılı: sonraki sipariş yeni kimlik alsın
     Q[anahtar()] = {};
     kirli = false;
     taslakSil(anahtar());

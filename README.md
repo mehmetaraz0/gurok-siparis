@@ -148,6 +148,7 @@ Talepler listesi 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş gün
 | `guncelleme-02.sql` | Kalem envanteri (tarih aralığı sorgusu) — bir kez |
 | `guncelleme-03.sql` | Mutfaklar: CMM kodları + bölüm — bir kez |
 | `guncelleme-04.sql` | Güvenlik: kalem/miktar doğrulaması + çöp kayıt temizliği — bir kez |
+| `guncelleme-05.sql` | Kod incelemesi: kod deseni zorlaması + idempotent gönderim + numara boşluğu — bir kez |
 
 Excel üretimi `ortak.js` içinde tek `buildExcelBlob()` fonksiyonundadır. Eski tek dosyalık
 sürümde aynı kurgu iki ayrı kopya halindeydi; artık bar da depo da aynı kodu çağırır.
@@ -163,6 +164,7 @@ Supabase panelinde **SQL Editor → New query**, sırayla:
 3. `guncelleme-02.sql` → **Run**  *(kalem envanteri için `depo_envanter` fonksiyonu)*
 4. `guncelleme-03.sql` → **Run**  *(mutfak kodları ve bölüm desteği)*
 5. `guncelleme-04.sql` → **Run**  *(girdi doğrulaması; test çöp kayıtlarını da temizler)*
+6. `guncelleme-05.sql` → **Run**  *(bar.html bu olmadan sipariş gönderemez — `p_istemci_id` parametresi bunda tanımlı)*
 
 Şifreyi sonra değiştirmek için `kurulum.sql` içindeki `insert into public.ayarlar ...`
 satırını yeni şifreyle tekrar çalıştırman yeterli.
@@ -200,6 +202,23 @@ negatif, sıfır, kesirli veya eksik miktarlı kalem kabul edilmiyor.
 **Supabase panelinde kapatılması önerilen:** Authentication → Providers → Email → *"Allow new
 users to sign up"* kapatılmalı. Sisteme kullanıcı hesabı gerekmiyor; açık kalması bir veri
 riski yaratmıyor (authenticated role'ün de tablo izni yok) ama gereksiz açık uçtur.
+*(Yapıldı ve doğrulandı: signup_disabled.)*
+
+**Kod incelemesi düzeltmeleri (guncelleme-05 + istemci):**
+- **XSS (Critical):** Depo envanter satırı ürün kodunu inline `onclick`'e gömüyordu; kod
+  anon RPC ile yazılabildiği için depo şifresini çalabilecek bir XSS vektörüydü. Satır artık
+  `data-kod` + event delegation kullanıyor; ayrıca sunucu kalem kodunu `^[A-Z]{3}[0-9]{8}$`
+  desenine zorluyor (tüm 878 katalog kodu bu desene uyuyor).
+- **Mükerrer sipariş (Important):** Ağ koptuğunda tekrar gönderim ikinci sipariş üretiyordu.
+  Artık her gönderim bir istemci kimliği taşıyor; sunucu aynı kimliği tekrar görürse var olan
+  siparişi döndürür, yeni açmaz.
+- **Onay düzenlemesi silinmesi (Important):** 15 sn'lik otomatik yenileme, depo bir siparişi
+  düzenlerken input'u yeniden çizip girilen miktarı eskisine döndürebiliyordu. Otomatik
+  yenileme artık sipariş detayı açıkken redraw yapmıyor.
+- **Numara boşluğu (Minor):** Sıra numarası `count+1` yerine `max+1`; kayıt silinse bile
+  çakışıp gün boyu sipariş açılamaması durumu ortadan kalktı.
+- **Not (kabul edilen):** Depo şifresine kaba-kuvvet denemesi için hız sınırı yoktur; koruma
+  yalnızca bcrypt maliyetidir. **Uzun ve rastgele bir depo şifresi kullanılması önerilir.**
 
 ## Bar tarafı ayrıntılar
 

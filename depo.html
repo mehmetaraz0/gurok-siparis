@@ -138,7 +138,16 @@ function basla() {
   document.getElementById("envBas").value = bugun();
   document.getElementById("envBit").value = bugun();
   yenile();
-  zamanlayici = setInterval(yenile, 15000);
+  zamanlayici = setInterval(otoYenile, 15000);
+}
+
+// Otomatik tazeleme, bir sipariş detayı AÇIKKEN çalışmaz: aksi halde depo
+// personeli onay miktarını yazarken input yeniden çizilir, girilen değer
+// sunucudaki eskisine döner ve yanlış miktar onaylanabilir. Liste ve ürün
+// envanteri ekranlarında tazeleme güvenli.
+function otoYenile() {
+  if (ACIK_NO) return;
+  yenile();
 }
 
 /* ================= Veri ================= */
@@ -157,6 +166,13 @@ async function yenile() {
 }
 
 function siparisBul(no) { return SIPARISLER.find(s => s.siparis_no === no) || null; }
+
+// Envanter satırı tıklaması — delegasyon. Ürün kodu data-kod'dan okunur,
+// gerçek değerdir (HTML entity çözülmüş), inline handler'a gömülmez.
+document.getElementById("envIcerik").addEventListener("click", e => {
+  const tr = e.target.closest(".env-sat");
+  if (tr && tr.dataset.kod) urunAc(tr.dataset.kod);
+});
 
 /* ================= Çizim yönlendirici ================= */
 
@@ -367,8 +383,10 @@ function cizEnvanter() {
 
   kodlar.forEach(k => {
     const u = urun[k];
+    // Ürün kodu kullanıcı (anon RPC) tarafından yazılabildiği için onclick
+    // string'ine GÖMÜLMEZ; data-kod ile taşınır, tıklama delegasyonla yakalanır.
     h += '<tr class="env-sat" data-ara="' + htmlEsc((u.a + " " + u.k).toLowerCase()) + '"'
-       + ' onclick="urunAc(\'' + htmlEsc(k) + '\')">'
+       + ' data-kod="' + htmlEsc(k) + '">'
        + '<td style="font-family:monospace;font-size:11px">' + htmlEsc(k) + '</td>'
        + '<td>' + htmlEsc(u.a) + '</td>'
        + '<td style="text-align:center">' + htmlEsc(u.b) + '</td>'
