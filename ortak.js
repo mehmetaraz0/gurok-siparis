@@ -140,10 +140,12 @@ function outletBul(kod) {
   return D.find(o => o.c === kod) || null;
 }
 
-// Ekranda gösterilen kısa kod: CSM315 → 315 (bar), CMM201 → M201 (mutfak)
+// Ekranda gösterilen kısa kod: CSM315 → B315 (bar), CMM201 → M201 (mutfak)
 function kisaKod(kod) {
   kod = String(kod || "");
-  return (kod.startsWith("CMM") ? "M" : "") + kod.slice(3);
+  if (kod.startsWith("CMM")) return "M" + kod.slice(3);
+  if (kod.startsWith("CSM")) return "B" + kod.slice(3);
+  return kod.slice(3);
 }
 
 // "M201 ANAMUTFAK · KAHVALTI" / "315 PAVILLION BAR"

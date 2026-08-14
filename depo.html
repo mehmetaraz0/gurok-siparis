@@ -236,7 +236,7 @@ function cizSerit() {
   kutu.style.display = bekleyenlerAcik ? "" : "none";
   kutu.innerHTML = bekleyenler.map(o =>
     '<span class="chip bekliyor" title="' + htmlEsc(o.n) + '">'
-    + htmlEsc(o.c.slice(3)) + ' ' + htmlEsc(o.n) + '</span>').join("");
+    + htmlEsc(kisaKod(o.c)) + ' ' + htmlEsc(o.n) + '</span>').join("");
 }
 
 function bekleyenlerAcKapa() {

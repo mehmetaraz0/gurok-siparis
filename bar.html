@@ -11,8 +11,8 @@
 <!-- ===== Kod giriş ekranı ===== -->
 <div class="kilit" id="kilit">
   <h2>SİPARİŞ GİRİŞİ</h2>
-  <p>Kodunuzu girin<br><small>bar için <b>315</b> · mutfak için <b>M201</b></small></p>
-  <input type="text" id="kod" placeholder="315 veya M201" autocomplete="off" maxlength="6">
+  <p>Birim kodunuzu girin</p>
+  <input type="text" id="kod" placeholder="Kod" autocomplete="off" maxlength="6">
   <button id="girisBtn" onclick="girisYap()">Devam</button>
   <div class="err" id="kodHata"></div>
 </div>
@@ -79,11 +79,11 @@ function yeniSiparisId() {
 }
 
 /* ================= Kod ile giriş =================
-   Bar   : CSM315 → "315"   (üç hane)
+   Bar   : CSM315 → "B315"  (B + üç hane)
    Mutfak: CMM201 → "M201"  (M + üç hane)
 
-   Bar 201 ile mutfak 201 çakışmasın diye mutfaklar M ile ayrılır. Tam kod
-   (CSM315 / CMM201) da kabul edilir.
+   Bar B, mutfak M ile başlar; çakışma olmaz. Tam kod (CSM315 / CMM201) da
+   kabul edilir. Örnek kodlar giriş ekranında GÖSTERİLMEZ.
 
    Bu bir kilit DEĞİLDİR — kodlar tahmin edilebilir. Amacı personeli doğru
    birime yönlendirmek ve yanlış yere sipariş girilmesini önlemek. */
@@ -96,10 +96,10 @@ function girisCoz(girilen) {
   const bar    = kod => D.find(o => o.c === kod) || null;
 
   let x;
-  if (/^CMM\d{3}$/.test(t) && (x = mutfak(t)))            return { tip: "mutfak", m: x };
+  if (/^CMM\d{3}$/.test(t) && (x = mutfak(t)))                  return { tip: "mutfak", m: x };
   if (/^M\d{3}$/.test(t)   && (x = mutfak("CMM" + t.slice(1)))) return { tip: "mutfak", m: x };
-  if (/^CSM\d{3}$/.test(t) && (x = bar(t)))               return { tip: "bar", o: x };
-  if (/^\d{3}$/.test(t)    && (x = bar("CSM" + t)))       return { tip: "bar", o: x };
+  if (/^CSM\d{3}$/.test(t) && (x = bar(t)))                     return { tip: "bar", o: x };
+  if (/^B\d{3}$/.test(t)   && (x = bar("CSM" + t.slice(1))))    return { tip: "bar", o: x };
   return null;
 }
 
@@ -111,7 +111,7 @@ async function girisYap() {
   const c = girisCoz(kodInput.value);
 
   if (!c) {
-    err.textContent = "Bu kodla bir birim bulunamadı. Bar: 315 · Mutfak: M201";
+    err.textContent = "Bu kodla bir birim bulunamadı.";
     kodInput.select();
     return;
   }

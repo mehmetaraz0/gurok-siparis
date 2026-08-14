@@ -6,7 +6,7 @@ Barlar ve mutfaklar talep gönderir, depo düzeltip onaylar, Excel onaylanmış 
 
 | Sayfa | Kim kullanır | Ne yapar |
 |---|---|---|
-| `bar.html` | Bar ve mutfak personeli | **Kodunu girer** (bar `315`, mutfak `M201`), miktar girer, **Siparişi Gönder** |
+| `bar.html` | Bar ve mutfak personeli | **Kodunu girer** (bar `B315`, mutfak `M201`), miktar girer, **Siparişi Gönder** |
 | `depo.html` | Depo sorumlusu | Şifreyle girer, talepleri düzeltir, onaylar, Excel indirir |
 
 ## Akış
@@ -14,7 +14,7 @@ Barlar ve mutfaklar talep gönderir, depo düzeltip onaylar, Excel onaylanmış 
 ```
 BAR                          DEPO
 ───                          ────
-kod gir (315)
+kod gir (B315)
 miktar gir
 Siparişi Gönder  ─────────►  talep listesinde belirir
    ↓                              ↓  (tıkla)
@@ -71,23 +71,27 @@ Aynı listeyi kullanan M201 ve M204'ün taslakları ve siparişleri birbirinden 
 
 ## Bar kodları
 
+Barlar **B**, mutfaklar **M** ile başlar. Örnek kodlar giriş ekranında **gösterilmez** —
+personel kendi kodunu bilerek girer.
+
 | Kod | Bar | | Kod | Bar |
 |---|---|---|---|---|
-| **201** | ALIBEY RESTAURANT | | **308** | KARAGOZ |
-| **202** | PARK RESTAURANT | | **310** | ILICA BAR |
-| **204** | SAHIL RESTAURANT | | **311** | HARLEK |
-| **205** | AQUA RESTAURANT | | **312** | HISAR |
-| **206** | KIYI RESTAURANT | | **313** | YONCALI |
-| **301** | TURK KAHVESI | | **314** | FRIG BEACH BAR |
-| **302** | CARDAK | | **315** | PAVILLION BAR |
-| **303** | TALVAR | | **316** | LOBBY BAR |
-| **304** | POOL | | **317** | PARK TURK KAHVESI |
-| **305** | ALI'S PUB | | **318** | SARAP VE BIRA EVI |
-| **306** | TENIS BAR | | | |
-| **307** | KONAK | | | |
+| **B201** | ALIBEY RESTAURANT | | **B308** | KARAGOZ |
+| **B202** | PARK RESTAURANT | | **B310** | ILICA BAR |
+| **B204** | SAHIL RESTAURANT | | **B311** | HARLEK |
+| **B205** | AQUA RESTAURANT | | **B312** | HISAR |
+| **B206** | KIYI RESTAURANT | | **B313** | YONCALI |
+| **B301** | TURK KAHVESI | | **B314** | FRIG BEACH BAR |
+| **B302** | CARDAK | | **B315** | PAVILLION BAR |
+| **B303** | TALVAR | | **B316** | LOBBY BAR |
+| **B304** | POOL | | **B317** | PARK TURK KAHVESI |
+| **B305** | ALI'S PUB | | **B318** | SARAP VE BIRA EVI |
+| **B306** | TENIS BAR | | | |
+| **B307** | KONAK | | | |
 
-`315`, `csm315`, `CSM315` yazımlarının hepsi kabul edilir. Kod sekme oturumunda tutulur;
-sayfa yenilenince sorulmaz, sekme kapanınca sorulur. **↔ Birim Değiştir** ile koda dönülür.
+`B315`, `csm315`, `CSM315` yazımlarının hepsi kabul edilir (bare `315` artık kabul edilmez).
+Kod sekme oturumunda tutulur; sayfa yenilenince sorulmaz, sekme kapanınca sorulur.
+**↔ Birim Değiştir** ile koda dönülür.
 
 ## Depo ekranı
 
@@ -95,8 +99,8 @@ sayfa yenilenince sorulmaz, sekme kapanınca sorulur. **↔ Birim Değiştir** i
 
 | SİPARİŞ NO | BAR | SAAT | KALEM | DURUM |
 |---|---|---|---|---|
-| SIP-20260814-007 | 315 PAVILLION BAR | 14:32 | 12 kalem · *2 düzeltildi* | 🟡 Talep |
-| SIP-20260814-006 | 201 ALIBEY | 09:15 | 8 kalem | ✅ Onaylandı |
+| SIP-20260814-007 | B315 PAVILLION BAR | 14:32 | 12 kalem · *2 düzeltildi* | 🟡 Talep |
+| SIP-20260814-006 | B201 ALIBEY | 09:15 | 8 kalem | ✅ Onaylandı |
 
 Satıra tıklanınca **sipariş detayı** açılır: her kalem bir satır, **ONAY** sütunu
 düzenlenebilir. Değişiklik anında kaydedilir. `0` yazılan ürün verilmedi sayılır —
@@ -121,9 +125,9 @@ Satıra basınca **ayrı bir sayfada** o ürünün bütün hareketleri açılır
 
 | OUTLET | SİPARİŞ NO | İSTENDİ | ÇIKTI | TALEP | MİKTAR | DURUM |
 |---|---|---|---|---|---|---|
-| **315** PAVILLION BAR | SIP-20260814-007 | 14/08 14:32 | 14/08 15:10 | 10 | **6** | ✅ çıktı |
-| **316** LOBBY BAR | SIP-20260814-008 | 14/08 14:32 | — | 5 | **5** | 🟡 bekliyor |
-| **201** ALIBEY REST. | SIP-20260813-001 | 13/08 09:15 | 13/08 10:40 | 4 | **4** | ✅ çıktı |
+| **B315** PAVILLION BAR | SIP-20260814-007 | 14/08 14:32 | 14/08 15:10 | 10 | **6** | ✅ çıktı |
+| **B316** LOBBY BAR | SIP-20260814-008 | 14/08 14:32 | — | 5 | **5** | 🟡 bekliyor |
+| **B201** ALIBEY REST. | SIP-20260813-001 | 13/08 09:15 | 13/08 10:40 | 4 | **4** | ✅ çıktı |
 
 Üstte ÇIKAN / BEKLEYEN / HAREKET özet kutuları, altında hareketler yeniden eskiye sıralı.
 Talep ile miktar farklıysa talep sütunu turuncu görünür. Liste ekranındaki arama kutusu
