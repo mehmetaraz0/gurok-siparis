@@ -136,6 +136,17 @@ function outletBul(kod) {
   return D.find(o => o.c === kod) || null;
 }
 
+// Ekranda gösterilen kısa kod: CSM315 → 315 (bar), CMM201 → M201 (mutfak)
+function kisaKod(kod) {
+  kod = String(kod || "");
+  return (kod.startsWith("CMM") ? "M" : "") + kod.slice(3);
+}
+
+// "M201 ANAMUTFAK · KAHVALTI" / "315 PAVILLION BAR"
+function birimAdi(kod, ad, bolum) {
+  return kisaKod(kod) + " " + (ad || "") + (bolum ? " · " + bolum : "");
+}
+
 // Grup rengi sınıfı (g0..g7 / gd)
 function grupSinifi(g) {
   return "g" + (GC[g] ?? "d");

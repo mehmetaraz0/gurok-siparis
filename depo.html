@@ -250,7 +250,8 @@ function cizTalepler() {
     h += '<div class="talep-sat' + (onaylandi ? " onayli" : "") + '"'
        + ' onclick="detayAc(\'' + htmlEsc(s.siparis_no) + '\')">'
        + '<span class="tno">' + htmlEsc(s.siparis_no) + '</span>'
-       + '<span><b>' + htmlEsc(s.outlet_kod.slice(3)) + '</b> ' + htmlEsc(s.outlet_ad) + '</span>'
+       + '<span><b>' + htmlEsc(kisaKod(s.outlet_kod)) + '</b> ' + htmlEsc(s.outlet_ad)
+       + (s.bolum ? ' <i class="bolum-et">' + htmlEsc(s.bolum) + '</i>' : '') + '</span>'
        + '<span>' + saat(s.gonderilme_saati) + '</span>'
        + '<span>' + s.kalemler.length + ' kalem'
        + (duzeltilen ? ' <i class="uyari">' + duzeltilen + ' düzeltildi</i>' : '')
@@ -318,6 +319,7 @@ function envanterTopla() {
         siparis_no: s.siparis_no,
         outlet_kod: s.outlet_kod,
         outlet_ad:  s.outlet_ad,
+        bolum:      s.bolum || null,
         istendi:    s.gonderilme_saati,
         cikti:      s.onay_saati,
         talep:      it.m,
@@ -447,7 +449,8 @@ function cizUrunDetay() {
 
   u.hareketler.forEach(hr => {
     h += '<tr class="' + (hr.onayli ? "" : "bekleyen-sat") + '">'
-       + '<td><b>' + htmlEsc(hr.outlet_kod.slice(3)) + '</b> ' + htmlEsc(hr.outlet_ad) + '</td>'
+       + '<td><b>' + htmlEsc(kisaKod(hr.outlet_kod)) + '</b> ' + htmlEsc(hr.outlet_ad)
+       + (hr.bolum ? ' <i class="bolum-et">' + htmlEsc(hr.bolum) + '</i>' : '') + '</td>'
        + '<td style="font-family:monospace;font-size:10px">' + htmlEsc(hr.siparis_no) + '</td>'
        + '<td style="white-space:nowrap">' + tarihSaat(hr.istendi) + '</td>'
        + '<td style="white-space:nowrap">' + (hr.onayli ? tarihSaat(hr.cikti) : "—") + '</td>'
@@ -489,7 +492,8 @@ function cizDetay(s) {
       '<div class="detay-bas">'
     + '<div>'
     + '<div class="dno">' + htmlEsc(s.siparis_no) + '</div>'
-    + '<div class="dbar"><b>' + htmlEsc(s.outlet_kod.slice(3)) + '</b> — ' + htmlEsc(s.outlet_ad)
+    + '<div class="dbar"><b>' + htmlEsc(kisaKod(s.outlet_kod)) + '</b> — ' + htmlEsc(s.outlet_ad)
+    + (s.bolum ? ' <i class="bolum-et">' + htmlEsc(s.bolum) + '</i>' : '')
     + ' &nbsp;·&nbsp; ' + saat(s.gonderilme_saati) + ' &nbsp;·&nbsp; ' + s.kalemler.length + ' kalem</div>'
     + '</div>'
     + '<div class="detay-btn">'

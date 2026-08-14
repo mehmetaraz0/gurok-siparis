@@ -1,12 +1,12 @@
 # GUROK Sipariş Sistemi
 
-ALI BEY CLUB MANAVGAT — 22 outlet, 3.408 kalem, LN Infor Excel çıktısı.
+ALI BEY CLUB MANAVGAT — 22 bar + 3 mutfak, LN Infor Excel çıktısı.
 
-Barlar talep gönderir, depo düzeltip onaylar, Excel onaylanmış miktarlarla iner.
+Barlar ve mutfaklar talep gönderir, depo düzeltip onaylar, Excel onaylanmış miktarlarla iner.
 
 | Sayfa | Kim kullanır | Ne yapar |
 |---|---|---|
-| `bar.html` | Bar / restoran personeli | Bar kodunu girer, miktar girer, **Siparişi Gönder** |
+| `bar.html` | Bar ve mutfak personeli | **Kodunu girer** (bar `315`, mutfak `M201`), miktar girer, **Siparişi Gönder** |
 | `depo.html` | Depo sorumlusu | Şifreyle girer, talepleri düzeltir, onaylar, Excel indirir |
 
 ## Akış
@@ -38,6 +38,28 @@ gönderimlerinin makbuzunu görür (numara + saat + kalem sayısı).
 Barda Excel butonu yoktur — çıktıyı depo alır. Böylece düzeltilmemiş miktarların
 yanlışlıkla LN Infor'a yüklenmesi mümkün olmaz.
 
+## Mutfaklar
+
+Mutfak personeli koduna **M** ekler: `M201`, `M204`, `M202`. Bar `201` ile mutfak `201`
+çakışmasın diyedir; bar personelinin alışkanlığı değişmez.
+
+| Kod | Mutfak | Bölümler |
+|---|---|---|
+| **M201** | ANAMUTFAK (CMM201) | KAHVALTI 136 · SICAK 116 · SOĞUK 79 · PASTANE 120 kalem |
+| **M204** | PARK MUTFAK (CMM204) | ANAMUTFAK ile aynı 4 bölüm |
+| **M202** | AQUA MUTFAK (CMM202) | tek liste, 117 kalem |
+
+Çok bölümlü mutfakta kod girildikten sonra **bölüm seçimi** çıkar. Her bölüm **ayrı sipariş**
+gönderir ve depoda ayrı numarayla, mor bir bölüm etiketiyle görünür — kahvaltının siparişi
+pastanenin siparişine karışmaz. Tek bölümlü mutfak (M202) seçim ekranını atlar.
+
+Mutfak listelerinde ürün grubu yoktur; sıra Excel dosyasındaki sırayla aynıdır. Aynı listeyi
+kullanan M201 ve M204'ün taslakları ve siparişleri birbirinden bağımsızdır.
+
+**Henüz eklenmedi** — ürün listesi geldiğinde eklenecek:
+`CMM201 → SAHİL KAHVALTI`, `CMM201 → SAHİL PIZZA`, `CMM203 Personel Mutfağı`,
+`CMM205 Club Lojman Personel Yemekhanesi`
+
 ## Bar kodları
 
 | Kod | Bar | | Kod | Bar |
@@ -56,7 +78,7 @@ yanlışlıkla LN Infor'a yüklenmesi mümkün olmaz.
 | **307** | KONAK | | | |
 
 `315`, `csm315`, `CSM315` yazımlarının hepsi kabul edilir. Kod sekme oturumunda tutulur;
-sayfa yenilenince sorulmaz, sekme kapanınca sorulur. **↔ Bar Değiştir** ile koda dönülür.
+sayfa yenilenince sorulmaz, sekme kapanınca sorulur. **↔ Birim Değiştir** ile koda dönülür.
 
 ## Depo ekranı
 
@@ -69,7 +91,7 @@ sayfa yenilenince sorulmaz, sekme kapanınca sorulur. **↔ Bar Değiştir** ile
 
 Satıra tıklanınca **sipariş detayı** açılır: her kalem bir satır, **ONAY** sütunu
 düzenlenebilir. Değişiklik anında kaydedilir. `0` yazılan ürün verilmedi sayılır —
-üstü çizilir, Excel'e ve konsolide toplama girmez.
+üstü çizilir, Excel'e ve envantere girmez.
 
 **📦 KALEM ENVANTERİ** — ürün bazında çıkış kaydı. Kendi **tarih aralığı** seçicisi vardır
 (varsayılan bugün, en fazla 92 gün).
@@ -106,14 +128,16 @@ Talepler listesi 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş gün
 |---|---|
 | `index.html` | İki sayfaya yönlendiren kapak |
 | `bar.html` | Sipariş girişi |
-| `depo.html` | Talep listesi + sipariş detayı + konsolide |
+| `depo.html` | Talep listesi + sipariş detayı + kalem envanteri + ürün hareketleri |
 | `ortak.js` | **Excel üretimi** + onaylanan miktar mantığı + Supabase istemcisi |
-| `veri.js` | Ürün kataloğu (`D`), Excel şablonu (`TPL_B64`), satır şablonu (`ROW2`), grup renkleri (`GC`) — *otomatik üretildi* |
+| `mutfak.js` | Mutfak katalogu (`MUTFAK_LISTE` bölümler, `M` mutfaklar) — *otomatik üretildi* |
+| `veri.js` | Bar ürün kataloğu (`D`), Excel şablonu (`TPL_B64`), satır şablonu (`ROW2`), grup renkleri (`GC`) — *otomatik üretildi* |
 | `stil.css` | Ortak stiller |
 | `config.js` | Supabase adresi ve anon key |
 | `kurulum.sql` | İlk kurulum — bir kez |
 | `guncelleme-01.sql` | Sipariş no + depo düzeltme/onay — bir kez |
 | `guncelleme-02.sql` | Kalem envanteri (tarih aralığı sorgusu) — bir kez |
+| `guncelleme-03.sql` | Mutfaklar: CMM kodları + bölüm — bir kez |
 
 Excel üretimi `ortak.js` içinde tek `buildExcelBlob()` fonksiyonundadır. Eski tek dosyalık
 sürümde aynı kurgu iki ayrı kopya halindeydi; artık bar da depo da aynı kodu çağırır.
@@ -127,6 +151,7 @@ Supabase panelinde **SQL Editor → New query**, sırayla:
 1. `kurulum.sql` — içindeki `BURAYA_SIFRE_YAZ` yerine depo şifreni yaz → **Run**
 2. `guncelleme-01.sql` → **Run**  *(şifreni değiştirmez, mevcut veriyi korur)*
 3. `guncelleme-02.sql` → **Run**  *(kalem envanteri için `depo_envanter` fonksiyonu)*
+4. `guncelleme-03.sql` → **Run**  *(mutfak kodları ve bölüm desteği)*
 
 Şifreyi sonra değiştirmek için `kurulum.sql` içindeki `insert into public.ayarlar ...`
 satırını yeni şifreyle tekrar çalıştırman yeterli.
@@ -144,7 +169,7 @@ Korumayı veritabanı sağlar:
 - `siparisler` ve `ayarlar` tablolarında RLS açık ve **hiçbir policy yok** → anon key ile
   bu tablolara doğrudan erişilemez. (Canlı doğrulandı: `permission denied for table siparisler`)
 - Tüm erişim `SECURITY DEFINER` fonksiyonlarından geçer:
-  - `siparis_gonder` — bar sipariş yazar, numara üretilir (outlet kodu ve kalem listesi doğrulanır)
+  - `siparis_gonder` — bar/mutfak sipariş yazar, numara üretilir (CSM veya CMM kodu ve kalem listesi doğrulanır)
   - `depo_liste` — şifre doğruysa o günün siparişlerini döner
   - `depo_envanter` — şifre doğruysa tarih aralığındaki siparişleri döner (en fazla 92 gün)
   - `depo_kalem_guncelle` — şifre ister, kilitli siparişte çalışmaz

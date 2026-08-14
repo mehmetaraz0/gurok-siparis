@@ -53,8 +53,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .outlet-ad{background:rgba(255,255,255,.15);color:#fff;padding:9px 14px;border-radius:8px;
            font-size:15px;font-weight:700;white-space:nowrap;flex:1;min-width:180px}
 
-/* Bar kodu giriş kutusu — kod kısa, iri ve okunaklı olsun */
-#kod{font-size:26px;font-weight:700;letter-spacing:5px;padding:14px}
+/* Kod giriş kutusu — kod kısa, iri ve okunaklı olsun */
+#kod{font-size:24px;font-weight:700;letter-spacing:4px;padding:14px;text-transform:uppercase}
+.kilit small{color:#999;font-size:12px;letter-spacing:0}
+.kilit small b{color:#1e3a5f}
+
+/* Mutfak bölüm seçimi */
+.bolum-btn{width:100%;padding:15px;margin-bottom:9px;background:#fff;color:#1e3a5f;
+           border:2px solid #dde3ea;border-radius:9px;font-size:16px;font-weight:700;
+           cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.bolum-btn:hover{border-color:#2e75b6;background:#f0f7ff}
+.bolum-btn span{font-size:11px;font-weight:600;color:#999}
 
 /* Gönderim durumu rozeti (bar) */
 .dz{font-size:12px;padding:5px 12px;border-radius:14px;font-weight:700;white-space:nowrap}
@@ -121,6 +130,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .talep-sat .ileri{font-size:22px;color:#bbb;text-align:right}
 .talep-sat .uyari{font-style:normal;font-size:10px;background:#fff3e0;color:#b26500;
                   padding:2px 7px;border-radius:9px;margin-left:4px;white-space:nowrap}
+/* Mutfak bölüm etiketi (KAHVALTI, PASTANE...) */
+.bolum-et{font-style:normal;font-size:10px;font-weight:700;background:#ede7f6;color:#5e35b1;
+          padding:2px 8px;border-radius:9px;margin-left:5px;white-space:nowrap}
+
 .rz{font-size:11px;font-weight:700;padding:5px 11px;border-radius:12px;white-space:nowrap}
 .rz.talep{background:#fff8e1;color:#b26500;border:1px solid #ffe0a3}
 .rz.onay{background:#e3f5e8;color:#1a6b3c;border:1px solid #a8d5b8}

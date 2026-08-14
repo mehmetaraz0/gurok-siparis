@@ -10,20 +10,28 @@
 
 <!-- ===== Kod giriş ekranı ===== -->
 <div class="kilit" id="kilit">
-  <h2>🍹 BAR SİPARİŞ GİRİŞİ</h2>
-  <p>Bar kodunuzu girin</p>
-  <input type="text" id="kod" placeholder="örn. 315" inputmode="numeric" autocomplete="off" maxlength="6">
+  <h2>SİPARİŞ GİRİŞİ</h2>
+  <p>Kodunuzu girin<br><small>bar için <b>315</b> · mutfak için <b>M201</b></small></p>
+  <input type="text" id="kod" placeholder="315 veya M201" autocomplete="off" maxlength="6">
   <button id="girisBtn" onclick="girisYap()">Devam</button>
   <div class="err" id="kodHata"></div>
+</div>
+
+<!-- ===== Bölüm seçim ekranı (çok bölümlü mutfaklar) ===== -->
+<div class="kilit" id="bolumEkran" style="display:none">
+  <h2 id="bolumBaslik">MUTFAK</h2>
+  <p>Bölümünüzü seçin</p>
+  <div id="bolumButonlar"></div>
+  <button class="cb" style="margin-top:14px" onclick="kodaDon()">← Kod ekranına dön</button>
 </div>
 
 <!-- ===== Ana ekran ===== -->
 <div id="ana" style="display:none">
 <div class="hdr">
-  <h1>BAR SİPARİŞ GİRİŞİ</h1>
+  <h1>SİPARİŞ GİRİŞİ</h1>
   <div class="hr">
     <span class="outlet-ad" id="outletAd">—</span>
-    <button class="cb" style="display:inline-block;width:auto;margin:0;padding:8px 14px" onclick="barDegistir()">↔ Bar Değiştir</button>
+    <button class="cb" style="display:inline-block;width:auto;margin:0;padding:8px 14px" onclick="barDegistir()">↔ Birim Değiştir</button>
     <span class="dz yok" id="durum">—</span>
     <button class="gb" id="gb" disabled onclick="gonder()">📤 Siparişi Gönder</button>
   </div>
@@ -51,6 +59,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="veri.js"></script>
+<script src="mutfak.js"></script>
 <script src="config.js"></script>
 <script src="ortak.js"></script>
 <script>
@@ -60,17 +69,29 @@ let Q = {};         // outletKod -> {kalemKod: miktar}
 let C = null;       // seçili outlet
 let kirli = false;  // gönderilmemiş değişiklik var mı
 
-/* ================= Bar kodu ile giriş =================
-   Kod, outlet kodunun son üç hanesidir: CSM315 → 315, CSM201 → 201.
-   22 outlet'in üç haneli kodları birbirinden farklı olduğu için tekil eşleşir.
+/* ================= Kod ile giriş =================
+   Bar   : CSM315 → "315"   (üç hane)
+   Mutfak: CMM201 → "M201"  (M + üç hane)
+
+   Bar 201 ile mutfak 201 çakışmasın diye mutfaklar M ile ayrılır. Tam kod
+   (CSM315 / CMM201) da kabul edilir.
 
    Bu bir kilit DEĞİLDİR — kodlar tahmin edilebilir. Amacı personeli doğru
-   outlet'e yönlendirmek ve açılır menüden yanlış bar seçilmesini önlemek. */
+   birime yönlendirmek ve yanlış yere sipariş girilmesini önlemek. */
 
-function outletByKod(girilen) {
+function girisCoz(girilen) {
   const t = String(girilen || "").trim().toUpperCase().replace(/[^0-9A-Z]/g, "");
   if (!t) return null;
-  return D.find(o => o.c === t || o.c === "CSM" + t || o.c.slice(3) === t) || null;
+
+  const mutfak = kod => M.find(m => m.c === kod) || null;
+  const bar    = kod => D.find(o => o.c === kod) || null;
+
+  let x;
+  if (/^CMM\d{3}$/.test(t) && (x = mutfak(t)))            return { tip: "mutfak", m: x };
+  if (/^M\d{3}$/.test(t)   && (x = mutfak("CMM" + t.slice(1)))) return { tip: "mutfak", m: x };
+  if (/^CSM\d{3}$/.test(t) && (x = bar(t)))               return { tip: "bar", o: x };
+  if (/^\d{3}$/.test(t)    && (x = bar("CSM" + t)))       return { tip: "bar", o: x };
+  return null;
 }
 
 const kodInput = document.getElementById("kod");
@@ -78,37 +99,79 @@ kodInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); }
 
 async function girisYap() {
   const err = document.getElementById("kodHata");
-  const o = outletByKod(kodInput.value);
+  const c = girisCoz(kodInput.value);
 
-  if (!o) {
-    err.textContent = "Bu kodla bir bar bulunamadı. Örnek: 315";
+  if (!c) {
+    err.textContent = "Bu kodla bir birim bulunamadı. Bar: 315 · Mutfak: M201";
     kodInput.select();
     return;
   }
 
   err.textContent = "";
-  sessionStorage.setItem("gurok_bar_kod", o.c);
-  await barAc(o);
+
+  if (c.tip === "bar") {
+    sessionStorage.setItem("gurok_birim", c.o.c);
+    await birimAc({ c: c.o.c, n: c.o.n, i: c.o.i, bl: null });
+    return;
+  }
+
+  // Tek bölümlü mutfak doğrudan açılır, çok bölümlü seçim ister
+  if (c.m.b.length === 1) {
+    await mutfakBolumAc(c.m, c.m.b[0]);
+  } else {
+    bolumSecimGoster(c.m);
+  }
 }
 
-async function barAc(o) {
-  C = o;
-  if (!Q[C.c]) Q[C.c] = {};
+function bolumSecimGoster(m) {
+  document.getElementById("kilit").style.display = "none";
+  document.getElementById("bolumEkran").style.display = "";
+  document.getElementById("bolumBaslik").textContent = m.n;
+  document.getElementById("bolumButonlar").innerHTML = m.b.map(b =>
+    '<button class="bolum-btn" onclick="mutfakBolumAc(' + JSON.stringify(m).replace(/"/g, "&quot;")
+    + ', \'' + b + '\')">' + htmlEsc(b)
+    + ' <span>' + (MUTFAK_LISTE[b] ? MUTFAK_LISTE[b].length : 0) + ' kalem</span></button>').join("");
+}
+
+async function mutfakBolumAc(m, bolum) {
+  const liste = MUTFAK_LISTE[bolum] || [];
+  sessionStorage.setItem("gurok_birim", m.c + "|" + bolum);
+  document.getElementById("bolumEkran").style.display = "none";
+  await birimAc({ c: m.c, n: m.n, i: liste, bl: bolum });
+}
+
+async function birimAc(birim) {
+  C = birim;
+  if (!Q[anahtar()]) Q[anahtar()] = {};
 
   document.getElementById("kilit").style.display = "none";
+  document.getElementById("bolumEkran").style.display = "none";
   document.getElementById("ana").style.display = "";
-  document.getElementById("outletAd").textContent = C.c.slice(3) + " — " + C.n;
+  document.getElementById("outletAd").textContent =
+    kisaKod(C.c) + " — " + C.n + (C.bl ? " · " + C.bl : "");
 
   yukle();
   rl();
   us();
 }
 
+// Miktar/taslak/makbuz anahtarı: bölüm varsa ona da bağlı
+function anahtar() {
+  return C.c + (C.bl ? "|" + C.bl : "");
+}
+
+function kodaDon() {
+  document.getElementById("bolumEkran").style.display = "none";
+  document.getElementById("kilit").style.display = "";
+  kodInput.value = "";
+  kodInput.focus();
+}
+
 function barDegistir() {
-  if (kirli && !confirm("Gönderilmemiş değişikliğiniz var. Yine de bar değiştirilsin mi?\n\n(Girdikleriniz bu cihazda taslak olarak saklanır.)")) {
+  if (kirli && !confirm("Gönderilmemiş değişikliğiniz var. Yine de birim değiştirilsin mi?\n\n(Girdikleriniz bu cihazda taslak olarak saklanır.)")) {
     return;
   }
-  sessionStorage.removeItem("gurok_bar_kod");
+  sessionStorage.removeItem("gurok_birim");
   C = null;
   kirli = false;
   document.getElementById("ana").style.display = "none";
@@ -118,14 +181,19 @@ function barDegistir() {
   kodInput.focus();
 }
 
-// Sekme oturumunda kayıtlı kod varsa tekrar sorma (sekme kapanınca silinir)
-const kayitliKod = sessionStorage.getItem("gurok_bar_kod");
-if (kayitliKod) {
-  const o = outletByKod(kayitliKod);
-  if (o) barAc(o);
-} else {
-  kodInput.focus();
+// Sekme oturumunda kayıtlı birim varsa tekrar sorma (sekme kapanınca silinir)
+const kayitliBirim = sessionStorage.getItem("gurok_birim");
+if (kayitliBirim) {
+  const [kod, bolum] = kayitliBirim.split("|");
+  if (bolum) {
+    const m = M.find(x => x.c === kod);
+    if (m) mutfakBolumAc(m, bolum);
+  } else {
+    const o = D.find(x => x.c === kod);
+    if (o) birimAc({ c: o.c, n: o.n, i: o.i, bl: null });
+  }
 }
+if (!C) kodInput.focus();
 
 /* ================= Taslak (yerel) =================
    3408 kalemlik listede 40 kalem girip telefon kilitlenirse emek gitmesin diye
@@ -136,8 +204,8 @@ function taslakAnahtar(kod) { return "gurok_taslak_" + kod; }
 function taslakYaz() {
   if (!C) return;
   try {
-    localStorage.setItem(taslakAnahtar(C.c), JSON.stringify({
-      tarih: bugun(), ts: Date.now(), q: Q[C.c] || {}
+    localStorage.setItem(taslakAnahtar(anahtar()), JSON.stringify({
+      tarih: bugun(), ts: Date.now(), q: Q[anahtar()] || {}
     }));
   } catch (e) { /* depolama dolu/kapalı — akışı bozmaz */ }
 }
@@ -159,12 +227,12 @@ function taslakSil(kod) {
    gönderilmemiş yerel taslak varsa geri yüklenir. */
 
 function yukle() {
-  Q[C.c] = {};
+  Q[anahtar()] = {};
   kirli = false;
 
-  const taslak = taslakOku(C.c);
+  const taslak = taslakOku(anahtar());
   if (taslak && Object.keys(taslak.q).length) {
-    Q[C.c] = taslak.q;
+    Q[anahtar()] = taslak.q;
     kirli = true;
     durum("hata", "⚠ Gönderilmemiş taslağınız var");
   } else {
@@ -196,7 +264,7 @@ function makbuzEkle(kod, kayit) {
 
 function makbuzCiz() {
   const kutu = document.getElementById("makbuz");
-  const liste = makbuzOku(C.c);
+  const liste = makbuzOku(anahtar());
   if (!liste.length) { kutu.style.display = "none"; return; }
 
   kutu.style.display = "";
@@ -221,12 +289,17 @@ function rl() {
         + '<div class="ib"><span>' + htmlEsc(C.c) + ' — ' + htmlEsc(C.n) + '</span>'
         + '<span class="bg">' + C.i.length + ' kalem</span></div>';
 
-  // Her grup tek blok, sırası GRUP_INDEX'e göre (bkz. ortak.js)
-  grupla(C.i).forEach(([g, items]) => {
-    h += '<div class="gh ' + grupSinifi(g) + '">' + htmlEsc(g)
-       + ' <span class="gs">' + items.length + '</span></div>';
+  // Bar listelerinde her grup tek blok, sırası GRUP_INDEX'e göre (bkz. ortak.js).
+  // Mutfak listelerinde ürün grubu yok; Excel'deki sıra olduğu gibi korunur.
+  const bloklar = C.bl ? [[null, C.i]] : grupla(C.i);
+
+  bloklar.forEach(([g, items]) => {
+    if (g) {
+      h += '<div class="gh ' + grupSinifi(g) + '">' + htmlEsc(g)
+         + ' <span class="gs">' + items.length + '</span></div>';
+    }
     items.forEach(i => {
-      const q = Q[C.c]?.[i.k] || "";
+      const q = Q[anahtar()]?.[i.k] || "";
       h += '<div class="ir' + (q ? " hq" : "") + '"'
          + ' data-n="' + htmlEsc(i.a.toLowerCase()) + '" data-c="' + htmlEsc(i.k.toLowerCase()) + '">'
          + '<span class="ic">' + htmlEsc(i.k) + '</span>'
@@ -257,13 +330,13 @@ function fi(t) {
 
 function sq(inp) {
   const k = inp.dataset.k, v = parseInt(inp.value) || 0;
-  if (!Q[C.c]) Q[C.c] = {};
+  if (!Q[anahtar()]) Q[anahtar()] = {};
   if (v > 0) {
-    Q[C.c][k] = v;
+    Q[anahtar()][k] = v;
     inp.classList.add("fl");
     inp.closest(".ir").classList.add("hq");
   } else {
-    delete Q[C.c][k];
+    delete Q[anahtar()][k];
     inp.classList.remove("fl");
     inp.closest(".ir").classList.remove("hq");
     inp.value = "";
@@ -299,7 +372,7 @@ function us() {
 function clr() {
   if (!C) return;
   if (!confirm("Bu outlet için girilen tüm miktarlar silinecek. Emin misiniz?")) return;
-  Q[C.c] = {};
+  Q[anahtar()] = {};
   kirli = true;
   taslakYaz();
   rl();
@@ -311,8 +384,10 @@ function clr() {
 // Ekranda görülen sırayla döner; Excel satır sırası da bu olur.
 function seciliKalemler() {
   if (!C) return [];
-  const q = Q[C.c] || {};
-  return grupluSirala(C.i.filter(i => q[i.k]))
+  const q = Q[anahtar()] || {};
+  const secilen = C.i.filter(i => q[i.k]);
+  // Mutfakta liste zaten Excel sırasında; barda grup sırasına dizilir.
+  return (C.bl ? secilen : grupluSirala(secilen))
     .map(i => ({ k: i.k, a: i.a, b: i.b, g: i.g, m: q[i.k] }));
 }
 
@@ -333,15 +408,15 @@ async function gonder() {
 
   try {
     const { data, error } = await SB.rpc("siparis_gonder", {
-      p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler
+      p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler, p_bolum: C.bl
     });
     if (error) throw error;
 
     // Gönderim başarılı: makbuza yaz, ekranı sıfırla
-    makbuzEkle(C.c, { no: data.siparis_no, saat: data.saat, kalem: data.kalem });
-    Q[C.c] = {};
+    makbuzEkle(anahtar(), { no: data.siparis_no, saat: data.saat, kalem: data.kalem });
+    Q[anahtar()] = {};
     kirli = false;
-    taslakSil(C.c);
+    taslakSil(anahtar());
     rl();
     us();
     makbuzCiz();
