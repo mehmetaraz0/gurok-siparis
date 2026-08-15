@@ -831,27 +831,38 @@ function tukSipKaydet(inp) {
   try { localStorage.setItem("gurok_tuk_siparis", JSON.stringify(TUK_SIPARIS)); } catch (e) {}
 }
 
-// Seçili kategoriyi Excel olarak indir (tüketim + kalan + sipariş)
+// Seçili kategorinin SİPARİŞ ÖZETİ Excel'i:
+// yalnızca sipariş girilen ürünler; SIRA 10,20,30... (10'ar artan); KOD/AD/MİKTAR/BİRİM.
 function tukKategoriExcel() {
   if (!TUKETIM || !TUK_AKTIF) return;
   const kat = TUKETIM.kategoriler[TUK_AKTIF] || {};
   const altSira = TUK_ALT_SIRA[TUK_AKTIF];
-  const bas = document.getElementById("tukBas").value, bit = document.getElementById("tukBit").value;
 
-  const aoa = [
-    [TUK_AKTIF + "  (" + bas + " — " + bit + ")"],
-    ["KOD", "ÜRÜN ADI", "BİRİM", "TÜKETİM", "KALAN STOK", "SİPARİŞ"]
-  ];
+  // Kategori/alt grup sırasında, yalnızca sipariş > 0 olanları düz topla
+  const secilen = [];
   const bloklar = altSira ? altSira.filter(a => kat[a]).map(a => [a, kat[a]]) : Object.entries(kat);
-  bloklar.forEach(([alt, list]) => {
-    if (altSira) aoa.push(["— " + alt + " —"]);
+  bloklar.forEach(([, list]) => {
     list.slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")).forEach(u => {
-      aoa.push([u.kod, u.ad, u.birim, u.tuketim, u.kalan != null ? u.kalan : "", TUK_SIPARIS[u.kod] || ""]);
+      const m = TUK_SIPARIS[u.kod] || 0;
+      if (m > 0) secilen.push({ kod: u.kod, ad: u.ad, miktar: m, birim: u.birim });
     });
   });
 
+  if (!secilen.length) {
+    alert("Bu kategoride sipariş girilmemiş.\n\nÖnce SİPARİŞ sütununa miktar yazın, sonra Excel alın.");
+    return;
+  }
+
+  const bas = document.getElementById("tukBas").value, bit = document.getElementById("tukBit").value;
+  const aoa = [
+    [TUK_AKTIF + " — SİPARİŞ LİSTESİ  (" + bas + " — " + bit + ")"],
+    ["SIRA", "KOD", "ÜRÜN ADI", "MİKTAR", "BİRİM"]
+  ];
+  // SIRA: her üründe 10'ar artar (10, 20, 30, ...)
+  secilen.forEach((u, i) => aoa.push([(i + 1) * 10, u.kod, u.ad, u.miktar, u.birim]));
+
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 13 }, { wch: 36 }, { wch: 7 }, { wch: 10 }, { wch: 11 }, { wch: 10 }];
+  ws["!cols"] = [{ wch: 6 }, { wch: 13 }, { wch: 38 }, { wch: 9 }, { wch: 7 }];
   const wb = XLSX.utils.book_new();
   const sheetAd = TUK_AKTIF.replace(/[\\/?*:\[\]]/g, "").slice(0, 31);
   XLSX.utils.book_append_sheet(wb, ws, sheetAd);
