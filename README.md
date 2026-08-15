@@ -84,6 +84,11 @@ tohumlamadan önce ve internet koparsa sistem eskisi gibi çalışır.
 Her outlet ve her mutfak-bölümü **kendi bağımsız listesi**. Liste düzenlemek eski siparişlerin
 Excel'ini etkilemez (sipariş kendi ürün bilgisini taşır).
 
+**Minimum sipariş miktarı:** Admin panelindeki **MİN** sütunu ürüne bir alt sınır koyar. Bu sınır
+ürün **koduna** bağlıdır — bir listede ayarlanınca **tüm listelerde** geçerli olur. Bar/mutfak
+o miktarın altında girerse kutu kırmızı olur, gönder butonu kapanır ve gönderim engellenir
+(düzeltmeye zorlar). Boş bırakmak sınırı kaldırır.
+
 ## Bar kodları
 
 Barlar **B**, mutfaklar **M** ile başlar. Örnek kodlar giriş ekranında **gösterilmez** —

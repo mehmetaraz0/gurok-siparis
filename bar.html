@@ -328,7 +328,9 @@ function rl() {
          + '<span class="in">' + htmlEsc(i.a) + '</span>'
          + '<span class="iu">' + htmlEsc(i.b) + '</span>'
          + '<span class="iq"><input type="number" min="0" value="' + (q || "") + '"'
-         + ' class="' + (q ? "fl" : "") + '" data-k="' + htmlEsc(i.k) + '"'
+         + ' class="' + (q ? "fl" : "") + (q && i.min && q < Number(i.min) ? " eksik" : "") + '"'
+         + (i.min ? ' title="En az ' + i.min + ' girilmeli"' : "")
+         + ' data-k="' + htmlEsc(i.k) + '"'
          + ' onchange="sq(this)" onfocus="this.select()"></span></div>';
     });
   });
@@ -350,6 +352,12 @@ function fi(t) {
   });
 }
 
+// Ürünün minimum sipariş miktarı (global; katalog_getir'den gelir). Yoksa 0.
+function urunMin(k) {
+  const it = C && C.i.find(i => i.k === k);
+  return it && it.min ? Number(it.min) : 0;
+}
+
 function sq(inp) {
   const k = inp.dataset.k, v = parseInt(inp.value) || 0;
   if (!Q[anahtar()]) Q[anahtar()] = {};
@@ -363,9 +371,28 @@ function sq(inp) {
     inp.closest(".ir").classList.remove("hq");
     inp.value = "";
   }
+  minIsaretle(inp, k, v);
   kirli = true;
   taslakYaz();
   us();
+}
+
+// Girilen miktar minimumun altındaysa input'u kırmızı işaretle.
+function minIsaretle(inp, k, v) {
+  const min = urunMin(k);
+  if (v > 0 && min > 0 && v < min) {
+    inp.classList.add("eksik");
+    inp.title = "En az " + min + " girilmeli";
+  } else {
+    inp.classList.remove("eksik");
+    inp.title = "";
+  }
+}
+
+// Minimumun altında kalan seçili kalemler
+function minEksikler() {
+  return seciliKalemler().filter(x => { const m = urunMin(x.k); return m > 0 && x.m < m; })
+    .map(x => ({ k: x.k, a: x.a, m: x.m, min: urunMin(x.k) }));
 }
 
 function us() {
@@ -380,8 +407,13 @@ function us() {
   ct.textContent = items.length;
   g.disabled = items.length === 0;
 
-  // Girilmiş ama gönderilmemiş miktar varsa rozet bunu hatırlatsın
-  if (kirli && items.length) {
+  // Minimum altında kalan varsa gönderim kapalı, uyarı göster
+  const eksik = minEksikler();
+  if (eksik.length) {
+    g.disabled = true;
+    durum("hata", "⚠ " + eksik.length + " üründe en az miktarın altında — düzeltin");
+  } else if (kirli && items.length) {
+    // Girilmiş ama gönderilmemiş miktar varsa rozet bunu hatırlatsın
     durum("hata", "⚠ " + items.length + " kalem girildi — henüz gönderilmedi");
   }
   tb.innerHTML = items.map(i =>
@@ -417,6 +449,15 @@ async function gonder() {
   if (!C) return;
   const kalemler = seciliKalemler();
   if (!kalemler.length) return;
+
+  // Minimum sipariş miktarı denetimi — altında kalan varsa gönderme, düzelttir.
+  const eksik = minEksikler();
+  if (eksik.length) {
+    alert("Şu ürünlerde en az sipariş miktarının ALTINDA:\n\n"
+      + eksik.map(x => "• " + x.a + ": en az " + x.min + " (girilen: " + x.m + ")").join("\n")
+      + "\n\nLütfen düzeltip tekrar gönderin.");
+    return;
+  }
 
   if (!confirm(kalemler.length + " kalemlik sipariş depoya gönderilecek.\n\n"
              + "Gönderdikten sonra listeniz sıfırlanır, sipariş depoda kalır.\n"

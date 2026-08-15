@@ -137,16 +137,18 @@ function cizListe() {
   const bloklar = grupla(KALEMLER, mutfakMi ? mutfakKatIndex : grupIndex);
 
   let h = '<table class="adm-tbl"><thead><tr>'
-        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BR</th><th>GRUP</th><th>SIRA</th><th>SİL</th>'
+        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BR</th><th>GRUP</th><th title="En az sipariş miktarı — tüm listelerde geçerli">MİN</th><th>SIRA</th><th>SİL</th>'
         + '</tr></thead><tbody>';
   bloklar.forEach(([g, items]) => {
-    h += '<tr class="adm-grp"><td colspan="6">' + htmlEsc(g || "—") + ' (' + items.length + ')</td></tr>';
+    h += '<tr class="adm-grp"><td colspan="7">' + htmlEsc(g || "—") + ' (' + items.length + ')</td></tr>';
     items.forEach((it, n) => {
       h += '<tr data-kod="' + htmlEsc(it.k) + '">'
          + '<td class="mono">' + htmlEsc(it.k) + '</td>'
          + '<td><input class="adm-inp ad" value="' + htmlEsc(it.a) + '" onchange="alanKaydet(this,\'ad\')"></td>'
          + '<td><input class="adm-inp br" value="' + htmlEsc(it.b) + '" list="birimListe" onchange="alanKaydet(this,\'birim\')"></td>'
          + '<td><input class="adm-inp gr" value="' + htmlEsc(it.g || "") + '" list="grupListe" onchange="alanKaydet(this,\'grup\')"></td>'
+         + '<td><input class="adm-inp min" type="number" min="0" value="' + (it.min != null ? it.min : "") + '"'
+         + ' placeholder="—" onchange="minKaydet(this)"></td>'
          + '<td class="adm-sira">'
          + '<button onclick="tasi(\'' + htmlEsc(it.k) + '\',-1)"' + (n === 0 ? " disabled" : "") + '>↑</button>'
          + '<button onclick="tasi(\'' + htmlEsc(it.k) + '\',1)"' + (n === items.length - 1 ? " disabled" : "") + '>↓</button>'
@@ -182,6 +184,27 @@ async function alanKaydet(inp, alan) {
     if (alan === "grup") cizListe();   // grup değişince blok yeniden dizilir
   } catch (e) {
     alert("Kaydedilemedi: " + (e.message || "")); inp.disabled = false; return;
+  }
+  inp.disabled = false;
+}
+
+/* ---- Minimum (global, koda göre) ---- */
+async function minKaydet(inp) {
+  const kod = inp.closest("tr").dataset.kod;
+  const it = kalemBul(kod);
+  const deger = inp.value.trim() === "" ? 0 : Number(inp.value);
+  if (isNaN(deger) || deger < 0) { inp.value = (it && it.min != null) ? it.min : ""; return; }
+
+  inp.disabled = true;
+  try {
+    const { error } = await SB.rpc("urun_min_ayarla", {
+      p_sifre: SIFRE, p_kod: kod, p_min: deger > 0 ? deger : null });
+    if (error) throw error;
+    if (it) it.min = deger > 0 ? deger : null;
+    inp.classList.add("ok"); setTimeout(() => inp.classList.remove("ok"), 1000);
+  } catch (e) {
+    alert("Kaydedilemedi: " + (e.message || "guncelleme-09.sql çalıştırıldı mı?"));
+    inp.value = (it && it.min != null) ? it.min : "";
   }
   inp.disabled = false;
 }
