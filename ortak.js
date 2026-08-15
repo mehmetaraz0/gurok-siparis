@@ -287,6 +287,13 @@ function grupIndex(g) {
   return (g in GRUP_INDEX) ? GRUP_INDEX[g] : 9999;
 }
 
+// Bir kod stokta izlenebilir mi? Yiyecek/içecek (YIY/ICA/ICB) her zaman izlenir
+// (sipariş katalogunda olmasa bile — sadece stok görünür, sipariş edilemez).
+// Diğer aileler (GNL genel/malzeme, DIG diğer) yalnızca katalogda ise izlenir.
+function stokUygun(kod) {
+  return /^(YIY|ICA|ICB)[0-9]/.test(kod) || katalogKodlari().has(kod);
+}
+
 /* ---------- Mutfak kategorileri ----------
    Mutfak listelerinin kategorisi ürün kodundan türetilir (bkz. mutfak.js).
    Bar grupları GC'den, mutfak kategorileri MUTFAK_KAT'tan sıralanır. */

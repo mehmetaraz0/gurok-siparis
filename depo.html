@@ -743,7 +743,7 @@ function stokFiltre(t) {
 // Katalog dışı stok kayıtlarını (GNL01 vb.) siler.
 async function stokKatalogDisiTemizle() {
   if (!confirm("Sipariş listesinde OLMAYAN ürünlerin stok kayıtları silinecek "
-             + "(GNL01 aktivite, GNL05 çevre vb.).\n\nKatalogdaki ürünler etkilenmez. Devam?")) return;
+             + "(GNL01 aktivite, GNL05 çevre vb.).\n\nYiyecek/içecek ve katalogdaki ürünler etkilenmez. Devam?")) return;
   try {
     const { data, error } = await SB.rpc("stok_katalog_disi_sil", {
       p_sifre: SIFRE, p_kodlar: [...katalogKodlari()]
@@ -777,14 +777,13 @@ async function stokDosyaSecildi() {
       kalemler = await stokExcelOku(f);
     }
     const okunan = kalemler.length;
-    // Yalnızca bar/mutfak katalogundaki kalemler stoğa girer; sipariş dışı
-    // gruplar (GNL01 aktivite, GNL05 çevre vb.) elenir.
-    const kat = katalogKodlari();
-    kalemler = kalemler.filter(k => kat.has(k.k));
+    // Yiyecek/içecek (YIY/ICA/ICB) stoğa girer (sipariş edilemese de görünür);
+    // gıda dışı (GNL aktivite/çevre vb.) yalnızca katalogdaysa girer.
+    kalemler = kalemler.filter(k => stokUygun(k.k));
 
     if (!kalemler.length) {
       onizle.innerHTML = '<span class="hata">' + okunan + ' satır okundu ama hiçbiri '
-        + 'katalogda değil. Dosya doğru mu?</span>';
+        + 'stoğa uygun değil. Dosya doğru mu?</span>';
       return;
     }
     stokParsed = kalemler;
@@ -792,7 +791,7 @@ async function stokDosyaSecildi() {
     const ornek = kalemler.slice(0, 3).map(k =>
       k.k + " " + (mod === "baseline" ? "→ " + k.kalan : "+ " + k.gelen)).join(" · ");
     onizle.innerHTML = '<b>' + okunan + ' satır okundu, ' + kalemler.length
-      + ' tanesi katalogda</b> (' + (okunan - kalemler.length) + ' sipariş dışı elendi). '
+      + ' tanesi stoğa uygun</b> (' + (okunan - kalemler.length) + ' gıda dışı elendi). '
       + (mod === "malkabul"
           ? '<br>' + kalemler.filter(k => k.gelen > 0).length + ' kalemde gelen > 0. '
           : '')
