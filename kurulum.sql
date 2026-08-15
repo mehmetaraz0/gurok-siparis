@@ -49,13 +49,32 @@ create table if not exists public.ayarlar (
   deger   text not null
 );
 
--- Outlet allowlist + PIN (kim gönderdiği belli olur; sahte outlet engellenir)
+-- Outlet allowlist (sahte outlet engellenir)
 create table if not exists public.outletler (
   kod text primary key,
   ad  text not null,
   tur text not null default 'bar',   -- 'bar' | 'mutfak'
-  pin text                            -- bcrypt hash; null = PIN yok (kod-yalnız)
+  pin text                            -- (eski tek-PIN sütunu; artık outlet_pin tablosu kullanılıyor)
 );
+
+-- Outlet başına 10'a kadar PIN — her biri farklı kişi/gönderen.
+-- etiket = depoda görünen "gönderen" kodu (ör. kişi adı ya da 1..10).
+create table if not exists public.outlet_pin (
+  id         uuid primary key default gen_random_uuid(),
+  outlet_kod text not null,
+  etiket     text not null,
+  pin        text not null,           -- bcrypt hash
+  unique (outlet_kod, etiket)
+);
+create index if not exists outlet_pin_kod_idx on public.outlet_pin (outlet_kod);
+
+-- Siparişe gönderen kimliği (hangi PIN/kişi) yazılır
+alter table public.siparisler add column if not exists gonderen text;
+
+-- Eski tek-PIN'leri çoklu tabloya taşı (etiket = '1')
+insert into public.outlet_pin (outlet_kod, etiket, pin)
+select kod, '1', pin from public.outletler where pin is not null
+on conflict (outlet_kod, etiket) do nothing;
 
 create table if not exists public.stok (
   kod        text primary key,
@@ -96,12 +115,14 @@ alter table public.urun_min add constraint urun_min_min_stok_chk   check (min_st
 alter table public.siparisler enable row level security;
 alter table public.ayarlar    enable row level security;
 alter table public.outletler  enable row level security;
+alter table public.outlet_pin enable row level security;
 alter table public.stok       enable row level security;
 alter table public.katalog    enable row level security;
 alter table public.urun_min   enable row level security;
 revoke all on public.siparisler from anon, authenticated;
 revoke all on public.ayarlar    from anon, authenticated;
 revoke all on public.outletler  from anon, authenticated;
+revoke all on public.outlet_pin from anon, authenticated;
 revoke all on public.stok       from anon, authenticated;
 revoke all on public.katalog    from anon, authenticated;
 revoke all on public.urun_min   from anon, authenticated;
@@ -161,19 +182,25 @@ $$;
 
 -- ================= HERKESE AÇIK =================
 
--- Bar/mutfak girişi: outlet var mı + PIN doğru mu (PIN yoksa serbest)
+-- Bar/mutfak girişi: outlet var mı + PIN doğru mu (PIN yoksa serbest).
+-- Outlet'in birden çok PIN'i olabilir; girilen PIN hangisine uyuyorsa
+-- o kişinin etiketi 'gonderen' olarak döner.
 create or replace function public.outlet_giris(p_kod text, p_pin text default null)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_ad text; v_pin text;
+declare v_ad text; v_var int; v_gonderen text;
 begin
-  select ad, pin into v_ad, v_pin from outletler where kod = p_kod;
+  select ad into v_ad from outletler where kod = p_kod;
   if not found then raise exception 'Gecersiz kod'; end if;
-  if v_pin is not null then
-    if p_pin is null or v_pin <> extensions.crypt(coalesce(p_pin,''), v_pin) then
-      raise exception 'PIN gerekli';
-    end if;
+
+  select count(*) into v_var from outlet_pin where outlet_kod = p_kod;
+  if v_var > 0 then
+    select etiket into v_gonderen from outlet_pin
+     where outlet_kod = p_kod and pin = extensions.crypt(coalesce(p_pin,''), pin) limit 1;
+    if v_gonderen is null then raise exception 'PIN gerekli'; end if;
   end if;
-  return jsonb_build_object('ok', true, 'kod', p_kod, 'ad', v_ad, 'pinli', v_pin is not null);
+
+  return jsonb_build_object('ok', true, 'kod', p_kod, 'ad', v_ad,
+    'pinli', v_var > 0, 'gonderen', v_gonderen);
 end $$;
 
 -- Bir listenin ürünleri (min + minstok ile)
@@ -215,17 +242,20 @@ as $$
 declare
   v_tarih date := (now() at time zone 'Europe/Istanbul')::date;
   v_no text; v_saat timestamptz; v_sira int; v_deneme int := 0;
-  v_el jsonb; v_m numeric; v_ad text; v_pin text; v_liste text; v_gunluk int;
+  v_el jsonb; v_m numeric; v_ad text; v_liste text; v_gunluk int;
+  v_pinvar int; v_gonderen text;
   v_iid text := nullif(left(coalesce(p_istemci_id, ''), 64), '');
   rec record;
 begin
-  -- 1) Outlet gerçek mi + PIN (varsa) doğru mu; ad'ı sunucu belirler
-  select ad, pin into v_ad, v_pin from outletler where kod = p_outlet_kod;
+  -- 1) Outlet gerçek mi + PIN (varsa) doğru mu; ad'ı sunucu belirler.
+  --    Çoklu PIN: girilen PIN hangi kişiye uyuyorsa etiketi 'gonderen' olur.
+  select ad into v_ad from outletler where kod = p_outlet_kod;
   if not found then raise exception 'Gecersiz outlet'; end if;
-  if v_pin is not null then
-    if p_pin is null or v_pin <> extensions.crypt(coalesce(p_pin,''), v_pin) then
-      raise exception 'PIN hatali';
-    end if;
+  select count(*) into v_pinvar from outlet_pin where outlet_kod = p_outlet_kod;
+  if v_pinvar > 0 then
+    select etiket into v_gonderen from outlet_pin
+     where outlet_kod = p_outlet_kod and pin = extensions.crypt(coalesce(p_pin,''), pin) limit 1;
+    if v_gonderen is null then raise exception 'PIN hatali'; end if;
   end if;
 
   -- 2) Kalem listesi biçimi
@@ -279,9 +309,9 @@ begin
       from siparisler where tarih = v_tarih;
     v_no := 'SIP-' || to_char(v_tarih,'YYYYMMDD') || '-' || lpad(v_sira::text,3,'0');
     begin
-      insert into siparisler (tarih, outlet_kod, outlet_ad, kalemler, siparis_no, durum, bolum, istemci_id)
+      insert into siparisler (tarih, outlet_kod, outlet_ad, kalemler, siparis_no, durum, bolum, istemci_id, gonderen)
       values (v_tarih, p_outlet_kod, left(v_ad,120), p_kalemler, v_no, 'talep',
-              nullif(left(coalesce(p_bolum,''),40),''), v_iid)
+              nullif(left(coalesce(p_bolum,''),40),''), v_iid, v_gonderen)
       returning gonderilme_saati into v_saat;
       exit;
     exception when unique_violation then
@@ -317,8 +347,9 @@ begin
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'siparis_no', siparis_no, 'outlet_kod', outlet_kod, 'outlet_ad', outlet_ad,
-             'bolum', bolum, 'kalemler', kalemler, 'gonderilme_saati', gonderilme_saati,
-             'durum', durum, 'onay_saati', onay_saati) order by gonderilme_saati desc)
+             'bolum', bolum, 'gonderen', gonderen, 'kalemler', kalemler,
+             'gonderilme_saati', gonderilme_saati, 'durum', durum, 'onay_saati', onay_saati)
+             order by gonderilme_saati desc)
       from siparisler where tarih = v_tarih), '[]'::jsonb);
 end $$;
 
@@ -334,7 +365,7 @@ begin
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'siparis_no', siparis_no, 'tarih', tarih, 'outlet_kod', outlet_kod,
-             'outlet_ad', outlet_ad, 'bolum', bolum, 'kalemler', kalemler,
+             'outlet_ad', outlet_ad, 'bolum', bolum, 'gonderen', gonderen, 'kalemler', kalemler,
              'gonderilme_saati', gonderilme_saati, 'durum', durum, 'onay_saati', onay_saati)
              order by gonderilme_saati)
       from siparisler where tarih between v_bas and v_bit), '[]'::jsonb);
@@ -589,25 +620,50 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
--- Outlet PIN yönetimi (admin)
-create or replace function public.outlet_pin_ayarla(p_sifre text, p_kod text, p_pin text)
-returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
-  if not exists (select 1 from outletler where kod = p_kod) then raise exception 'Outlet yok'; end if;
-  update outletler
-     set pin = case when coalesce(p_pin,'') = '' then null
-                    else extensions.crypt(p_pin, extensions.gen_salt('bf')) end
-   where kod = p_kod;
-  return jsonb_build_object('ok', true);
-end $$;
-
+-- Outlet listesi + her outlet'in PIN sayısı (admin genel görünüm)
 create or replace function public.outlet_liste(p_sifre text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
   return coalesce((select jsonb_agg(jsonb_build_object(
-    'kod', kod, 'ad', ad, 'tur', tur, 'pinli', pin is not null) order by kod) from outletler), '[]'::jsonb);
+    'kod', o.kod, 'ad', o.ad, 'tur', o.tur,
+    'pin_sayisi', (select count(*) from outlet_pin p where p.outlet_kod = o.kod)) order by o.kod)
+    from outletler o), '[]'::jsonb);
+end $$;
+
+-- Bir outlet'in PIN'leri (etiketler; hash dönmez)
+create or replace function public.outlet_pin_liste(p_sifre text, p_kod text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('id', id, 'etiket', etiket) order by etiket)
+    from outlet_pin where outlet_kod = p_kod), '[]'::jsonb);
+end $$;
+
+-- PIN ekle (outlet başına en fazla 10; etiket = gönderen kimliği)
+create or replace function public.outlet_pin_ekle(p_sifre text, p_kod text, p_etiket text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_adet int;
+begin
+  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not exists (select 1 from outletler where kod = p_kod) then raise exception 'Outlet yok'; end if;
+  if coalesce(p_etiket,'') = '' then raise exception 'Etiket (gonderen) bos olamaz'; end if;
+  if p_pin !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
+  select count(*) into v_adet from outlet_pin where outlet_kod = p_kod;
+  if v_adet >= 10 then raise exception 'Bu outlet icin en fazla 10 PIN'; end if;
+  insert into outlet_pin (outlet_kod, etiket, pin)
+  values (p_kod, left(p_etiket,40), extensions.crypt(p_pin, extensions.gen_salt('bf')))
+  on conflict (outlet_kod, etiket) do update set pin = excluded.pin;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- PIN sil (id ile)
+create or replace function public.outlet_pin_sil(p_sifre text, p_id uuid)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  delete from outlet_pin where id = p_id;
+  return jsonb_build_object('ok', true);
 end $$;
 
 
@@ -636,5 +692,7 @@ grant execute on function public.katalog_duzelt(text, text, text, text, text, te
 grant execute on function public.katalog_sira(text, text, jsonb)                      to anon;
 grant execute on function public.urun_min_ayarla(text, text, numeric)                 to anon;
 grant execute on function public.urun_minstok_ayarla(text, text, numeric)             to anon;
-grant execute on function public.outlet_pin_ayarla(text, text, text)                  to anon;
 grant execute on function public.outlet_liste(text)                                   to anon;
+grant execute on function public.outlet_pin_liste(text, text)                         to anon;
+grant execute on function public.outlet_pin_ekle(text, text, text, text)              to anon;
+grant execute on function public.outlet_pin_sil(text, uuid)                           to anon;
