@@ -76,7 +76,10 @@
           <div class="stok-onizle" id="stokOnizle"></div>
           <button class="db" id="stokUygulaBtn" disabled onclick="stokUygula()">Uygula</button>
         </div>
-        <input class="sb stok-ara" id="stokAra" placeholder="Ürün ara..." oninput="stokFiltre(this.value)">
+        <div class="stok-sag">
+          <input class="sb stok-ara" id="stokAra" placeholder="Ürün ara..." oninput="stokFiltre(this.value)">
+          <button class="cb" style="width:auto;margin:8px 0 0;padding:8px 12px" onclick="stokKatalogDisiTemizle()">🧹 Katalog dışını temizle</button>
+        </div>
       </div>
 
       <div class="depo-header">
@@ -107,6 +110,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="veri.js"></script>
+<script src="mutfak.js"></script>
 <script src="config.js"></script>
 <script src="ortak.js"></script>
 <script>
@@ -720,6 +724,23 @@ function stokFiltre(t) {
   if (t) document.getElementById("stokCount").textContent = n + " kalem (filtreli)";
 }
 
+// Katalog dışı stok kayıtlarını (GNL01 vb.) siler.
+async function stokKatalogDisiTemizle() {
+  if (!confirm("Sipariş listesinde OLMAYAN ürünlerin stok kayıtları silinecek "
+             + "(GNL01 aktivite, GNL05 çevre vb.).\n\nKatalogdaki ürünler etkilenmez. Devam?")) return;
+  try {
+    const { data, error } = await SB.rpc("stok_katalog_disi_sil", {
+      p_sifre: SIFRE, p_kodlar: [...katalogKodlari()]
+    });
+    if (error) throw error;
+    alert((data.silinen ?? 0) + " katalog dışı kayıt silindi.");
+    await stokGetir();
+  } catch (e) {
+    console.error(e);
+    alert("Temizlenemedi: " + (e.message || "guncelleme-07.sql çalıştırıldı mı?"));
+  }
+}
+
 /* ---- Dosya oku (Excel / PDF) ---- */
 
 async function stokDosyaSecildi() {
@@ -739,18 +760,25 @@ async function stokDosyaSecildi() {
     } else {
       kalemler = await stokExcelOku(f);
     }
+    const okunan = kalemler.length;
+    // Yalnızca bar/mutfak katalogundaki kalemler stoğa girer; sipariş dışı
+    // gruplar (GNL01 aktivite, GNL05 çevre vb.) elenir.
+    const kat = katalogKodlari();
+    kalemler = kalemler.filter(k => kat.has(k.k));
+
     if (!kalemler.length) {
-      onizle.innerHTML = '<span class="hata">Dosyadan kalem okunamadı. '
-        + 'KUM raporu biçiminde mi? Excel sorun çıkarırsa PDF deneyin.</span>';
+      onizle.innerHTML = '<span class="hata">' + okunan + ' satır okundu ama hiçbiri '
+        + 'katalogda değil. Dosya doğru mu?</span>';
       return;
     }
     stokParsed = kalemler;
     const mod = document.querySelector('input[name=stokMod]:checked').value;
     const ornek = kalemler.slice(0, 3).map(k =>
       k.k + " " + (mod === "baseline" ? "→ " + k.kalan : "+ " + k.gelen)).join(" · ");
-    onizle.innerHTML = '<b>' + kalemler.length + ' kalem okundu.</b> '
+    onizle.innerHTML = '<b>' + okunan + ' satır okundu, ' + kalemler.length
+      + ' tanesi katalogda</b> (' + (okunan - kalemler.length) + ' sipariş dışı elendi). '
       + (mod === "malkabul"
-          ? '(' + kalemler.filter(k => k.gelen > 0).length + ' kalemde gelen > 0) '
+          ? '<br>' + kalemler.filter(k => k.gelen > 0).length + ' kalemde gelen > 0. '
           : '')
       + '<br><small>' + htmlEsc(ornek) + ' …</small>';
     btn.disabled = false;

@@ -56,6 +56,19 @@ function tarihSaat(ts) {
 
 /* ---------- Stok ---------- */
 
+// Bar + mutfak katalogundaki tüm ürün kodları. Stok yalnızca bu kalemler için
+// tutulur; KUM raporundaki sipariş dışı gruplar (GNL01 aktivite vb.) elenir.
+let _katalogSet = null;
+function katalogKodlari() {
+  if (_katalogSet) return _katalogSet;
+  const s = new Set();
+  if (typeof D !== "undefined") D.forEach(o => o.i.forEach(i => s.add(i.k)));
+  if (typeof MUTFAK_LISTE !== "undefined")
+    Object.values(MUTFAK_LISTE).flat().forEach(i => s.add(i.k));
+  _katalogSet = s;
+  return s;
+}
+
 // Türk sayı biçimi: "48.000,00" → 48000 ; "-2,00" → -2 ; düz "48000" → 48000
 function trNum(s) {
   s = String(s ?? "").trim();
