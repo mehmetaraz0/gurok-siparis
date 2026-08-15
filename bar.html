@@ -69,6 +69,7 @@ let Q = {};          // outletKod -> {kalemKod: miktar}
 let C = null;        // seçili outlet
 let kirli = false;   // gönderilmemiş değişiklik var mı
 let siparisId = null; // idempotency: bu sipariş denemesinin istemci kimliği
+let GIZLI = new Set(); // stoğu 0/negatif → listede gizlenecek kodlar
 
 // Bir gönderim denemesi için benzersiz kimlik. Ağ koparsa aynı kimlikle tekrar
 // gönderilir; sunucu ikinci siparişi açmaz, ilkini döndürür.
@@ -160,6 +161,7 @@ async function birimAc(birim) {
   document.getElementById("outletAd").textContent =
     kisaKod(C.c) + " — " + C.n + (C.bl ? " · " + C.bl : "");
 
+  GIZLI = await stokGizliYukle();   // stoğu biten ürünleri gizle
   yukle();
   rl();
   us();
@@ -295,14 +297,18 @@ function rl() {
   const p = document.getElementById("lp");
   if (!C) { p.innerHTML = '<div class="em">Bar kodunuzu girin</div>'; return; }
 
+  // Stoğu biten ürünler listede görünmez. Stok bilgisi olmayan (GIZLI'de
+  // bulunmayan) ürün normal görünür — mutfak kalemleri kaybolmaz.
+  const gorunur = C.i.filter(i => !GIZLI.has(i.k));
+
   let h = '<input class="sb" placeholder="Ürün ara..." oninput="fi(this.value)">'
         + '<div class="ib"><span>' + htmlEsc(C.c) + ' — ' + htmlEsc(C.n) + '</span>'
-        + '<span class="bg">' + C.i.length + ' kalem</span></div>';
+        + '<span class="bg">' + gorunur.length + ' kalem</span></div>';
 
   // Her grup tek blok. Bar listeleri GC sırasına, mutfak listeleri kategori
   // sırasına göre dizilir (bkz. ortak.js / mutfak.js).
   const mutfakMi = !!C.bl;
-  const bloklar = mutfakMi ? grupla(C.i, mutfakKatIndex) : grupla(C.i);
+  const bloklar = mutfakMi ? grupla(gorunur, mutfakKatIndex) : grupla(gorunur);
 
   bloklar.forEach(([g, items]) => {
     if (g) {

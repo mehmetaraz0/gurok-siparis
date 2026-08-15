@@ -54,6 +54,53 @@ function tarihSaat(ts) {
        + " " + saat(ts);
 }
 
+/* ---------- Stok ---------- */
+
+// Türk sayı biçimi: "48.000,00" → 48000 ; "-2,00" → -2 ; düz "48000" → 48000
+function trNum(s) {
+  s = String(s ?? "").trim();
+  if (s === "") return null;
+  if (s.includes(",")) return parseFloat(s.replace(/\./g, "").replace(",", "."));
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+// KUM raporu metin satırlarından kalem çıkarır (PDF ve satır-birleştirilmiş Excel).
+// Satır: KOD  AD...  BİRİM  d0 d1 .. d9   (10 sayı; d1=Giriş Satın Alma, d9=Kalan)
+// Dönen: [{k, a, b, kalan, gelen}]
+function kumParse(satirlar) {
+  const KOD = /^([A-Z]{3}\d{8})\s+(.+)$/;
+  const NUM = /^-?[\d.]*\d(?:,\d+)?$|^-?\d+(?:\.\d+)?$/;
+  const out = [];
+  for (const raw of satirlar) {
+    const t = String(raw ?? "").replace(/\s+/g, " ").trim();
+    const m = t.match(KOD);
+    if (!m) continue;
+    const parca = m[2].split(" ");
+    if (parca.length < 11) continue;
+    const sayilar = parca.slice(-10);
+    if (!sayilar.every(x => NUM.test(x))) continue;
+    const birim = parca[parca.length - 11];
+    const ad = parca.slice(0, parca.length - 11).join(" ");
+    const v = sayilar.map(trNum);
+    out.push({ k: m[1], a: ad, b: birim, kalan: v[9], gelen: v[1] });
+  }
+  return out;
+}
+
+// Bar/mutfak: stoğu 0/negatif olan kod kümesi. Stok modülü yoksa boş küme
+// döner (hiçbir ürün gizlenmez), böylece sistem eskisi gibi çalışmaya devam eder.
+async function stokGizliYukle() {
+  try {
+    const { data, error } = await SB.rpc("stok_gizli_kodlar");
+    if (error) throw error;
+    return new Set(data || []);
+  } catch (e) {
+    console.error("stok_gizli_kodlar:", e.message || e);
+    return new Set();
+  }
+}
+
 /* ---------- Onaylanan miktar ---------- */
 
 // Bir kalemin Excel'e girecek miktarı.

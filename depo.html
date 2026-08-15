@@ -41,6 +41,7 @@
     <div class="sekmeler">
       <button class="sk aktif" id="skTalep" onclick="sekmeGec('talep')">📋 TALEPLER</button>
       <button class="sk" id="skEnv" onclick="sekmeGec('env')">📦 KALEM ENVANTERİ</button>
+      <button class="sk" id="skStok" onclick="sekmeGec('stok')">📊 STOK</button>
     </div>
 
     <div id="talepler"></div>
@@ -59,6 +60,30 @@
         <span class="depo-count" id="envCount">0 kalem</span>
       </div>
       <div id="envIcerik"><div class="em">Tarih aralığı seçip <b>Getir</b>'e basın.</div></div>
+    </div>
+
+    <div id="stok" style="display:none">
+      <div class="stok-arac">
+        <div class="stok-yukle">
+          <b>KUM raporu yükle</b>
+          <div class="stok-mod">
+            <label><input type="radio" name="stokMod" value="baseline" checked>
+              <span>Baseline — stoğu <b>Kalan</b>'a eşitle</span></label>
+            <label><input type="radio" name="stokMod" value="malkabul">
+              <span>Mal kabul — <b>gelen</b>i stoğa ekle</span></label>
+          </div>
+          <input type="file" id="stokDosya" accept=".xlsx,.xls,.csv,.pdf" onchange="stokDosyaSecildi()">
+          <div class="stok-onizle" id="stokOnizle"></div>
+          <button class="db" id="stokUygulaBtn" disabled onclick="stokUygula()">Uygula</button>
+        </div>
+        <input class="sb stok-ara" id="stokAra" placeholder="Ürün ara..." oninput="stokFiltre(this.value)">
+      </div>
+
+      <div class="depo-header">
+        <span>GÜNCEL STOK</span>
+        <span class="depo-count" id="stokCount">—</span>
+      </div>
+      <div id="stokIcerik"><div class="em">Şifreyle giriş yapıldıktan sonra stok yüklenir.</div></div>
     </div>
   </div>
 
@@ -79,15 +104,24 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="veri.js"></script>
 <script src="config.js"></script>
 <script src="ortak.js"></script>
 <script>
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
 /* ================= Durum ================= */
 
 let SIFRE = null;
 let SIPARISLER = [];            // seçili günün siparişleri (talepler ekranı)
 let ACIK_NO = null;             // detayı açık siparişin numarası (null ise liste ekranı)
+let STOK = null;                // stok listesi (null = henüz çekilmedi)
+let stokParsed = null;          // yüklenen dosyadan ayrıştırılan kalemler
 let ENVANTER = null;            // envanter aralığının siparişleri (null = henüz çekilmedi)
 let ACIK_URUN = null;           // hareket detayı açık ürün kodu (null ise liste ekranı)
 let zamanlayici = null;
@@ -197,14 +231,15 @@ function ciz() {
 /* ================= Ekran 1: liste ================= */
 
 function sekmeGec(hangi) {
-  const t = hangi === "talep";
-  document.getElementById("talepler").style.display = t ? "" : "none";
-  document.getElementById("envanter").style.display = t ? "none" : "";
-  document.getElementById("skTalep").classList.toggle("aktif", t);
-  document.getElementById("skEnv").classList.toggle("aktif", !t);
+  document.getElementById("talepler").style.display  = hangi === "talep" ? "" : "none";
+  document.getElementById("envanter").style.display  = hangi === "env"   ? "" : "none";
+  document.getElementById("stok").style.display      = hangi === "stok"  ? "" : "none";
+  document.getElementById("skTalep").classList.toggle("aktif", hangi === "talep");
+  document.getElementById("skEnv").classList.toggle("aktif",   hangi === "env");
+  document.getElementById("skStok").classList.toggle("aktif",  hangi === "stok");
 
-  // Envanter ilk açılışta kendiliğinden dolsun (boş ekran karşılamasın)
-  if (!t && !ENVANTER) envanterGetir();
+  if (hangi === "env"  && !ENVANTER) envanterGetir();
+  if (hangi === "stok" && !STOK)     stokGetir();
 }
 
 // Hangi barın gönderdiği zaten talep listesinde görünüyor; burada sadece
@@ -627,6 +662,176 @@ async function detayExcel() {
     btn.classList.remove("ok");
     btn.disabled = false;
   }, 2500);
+}
+
+/* ================= STOK ================= */
+
+async function stokGetir() {
+  const kutu = document.getElementById("stokIcerik");
+  kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
+  try {
+    const { data, error } = await SB.rpc("stok_liste", { p_sifre: SIFRE });
+    if (error) throw error;
+    STOK = data || [];
+    cizStok();
+  } catch (e) {
+    console.error(e);
+    STOK = null;
+    kutu.innerHTML = '<div class="em">⚠ Stok alınamadı: ' + htmlEsc(e.message || "hata")
+                   + '<br><small>guncelleme-06.sql çalıştırıldı mı?</small></div>';
+  }
+}
+
+function cizStok() {
+  const kutu = document.getElementById("stokIcerik");
+  document.getElementById("stokCount").textContent = (STOK ? STOK.length : 0) + " kalem";
+
+  if (!STOK || !STOK.length) {
+    kutu.innerHTML = '<div class="em">Henüz stok yüklenmedi. Yukarıdan KUM raporu yükleyin.</div>';
+    return;
+  }
+
+  let h = '<table class="stok-tbl"><thead><tr>'
+        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BR</th><th>STOK</th><th>GÜNCELLEME</th>'
+        + '</tr></thead><tbody>';
+  STOK.forEach(s => {
+    const m = Number(s.miktar);
+    const sinif = m < 0 ? "negatif" : (m === 0 ? "sifir" : (m <= 5 ? "dusuk" : ""));
+    h += '<tr class="stok-sat ' + sinif + '" data-ara="' + htmlEsc((s.ad + " " + s.kod).toLowerCase()) + '">'
+       + '<td style="font-family:monospace;font-size:11px">' + htmlEsc(s.kod) + '</td>'
+       + '<td>' + htmlEsc(s.ad || "") + '</td>'
+       + '<td style="text-align:center">' + htmlEsc(s.birim || "") + '</td>'
+       + '<td class="say miktar">' + (Number.isInteger(m) ? m : m.toFixed(2)) + '</td>'
+       + '<td style="font-size:11px;color:#888">' + (s.guncelleme ? tarihSaat(s.guncelleme) : "—") + '</td>'
+       + '</tr>';
+  });
+  kutu.innerHTML = h + '</tbody></table>';
+  stokFiltre(document.getElementById("stokAra").value);
+}
+
+function stokFiltre(t) {
+  t = (t || "").toLowerCase().trim();
+  let n = 0;
+  document.querySelectorAll("#stokIcerik tr[data-ara]").forEach(tr => {
+    const u = !t || tr.dataset.ara.includes(t);
+    tr.style.display = u ? "" : "none";
+    if (u) n++;
+  });
+  if (t) document.getElementById("stokCount").textContent = n + " kalem (filtreli)";
+}
+
+/* ---- Dosya oku (Excel / PDF) ---- */
+
+async function stokDosyaSecildi() {
+  const f = document.getElementById("stokDosya").files[0];
+  const onizle = document.getElementById("stokOnizle");
+  const btn = document.getElementById("stokUygulaBtn");
+  stokParsed = null;
+  btn.disabled = true;
+  if (!f) { onizle.textContent = ""; return; }
+
+  onizle.textContent = "⏳ Okunuyor: " + f.name;
+  try {
+    const ad = f.name.toLowerCase();
+    let kalemler;
+    if (ad.endsWith(".pdf")) {
+      kalemler = await stokPdfOku(f);
+    } else {
+      kalemler = await stokExcelOku(f);
+    }
+    if (!kalemler.length) {
+      onizle.innerHTML = '<span class="hata">Dosyadan kalem okunamadı. '
+        + 'KUM raporu biçiminde mi? Excel sorun çıkarırsa PDF deneyin.</span>';
+      return;
+    }
+    stokParsed = kalemler;
+    const mod = document.querySelector('input[name=stokMod]:checked').value;
+    const ornek = kalemler.slice(0, 3).map(k =>
+      k.k + " " + (mod === "baseline" ? "→ " + k.kalan : "+ " + k.gelen)).join(" · ");
+    onizle.innerHTML = '<b>' + kalemler.length + ' kalem okundu.</b> '
+      + (mod === "malkabul"
+          ? '(' + kalemler.filter(k => k.gelen > 0).length + ' kalemde gelen > 0) '
+          : '')
+      + '<br><small>' + htmlEsc(ornek) + ' …</small>';
+    btn.disabled = false;
+  } catch (e) {
+    console.error(e);
+    onizle.innerHTML = '<span class="hata">Okuma hatası: ' + htmlEsc(e.message || "") + '</span>';
+  }
+}
+
+function stokExcelOku(file) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onerror = () => reject(new Error("dosya okunamadı"));
+    rd.onload = () => {
+      try {
+        const wb = XLSX.read(rd.result, { type: "array" });
+        // Her sayfadaki her satırı boşlukla birleştirip KUM satır ayrıştırıcısına ver.
+        const satirlar = [];
+        wb.SheetNames.forEach(ad => {
+          const rows = XLSX.utils.sheet_to_json(wb.Sheets[ad], { header: 1, raw: false, defval: "" });
+          rows.forEach(r => satirlar.push(r.join(" ")));
+        });
+        resolve(kumParse(satirlar));
+      } catch (e) { reject(e); }
+    };
+    rd.readAsArrayBuffer(file);
+  });
+}
+
+async function stokPdfOku(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const satirlar = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    // Aynı y konumundaki parçaları tek satır olarak grupla
+    const gruplar = {};
+    tc.items.forEach(it => {
+      const y = Math.round(it.transform[5]);
+      (gruplar[y] = gruplar[y] || []).push({ x: it.transform[4], s: it.str });
+    });
+    Object.keys(gruplar).map(Number).sort((a, b) => b - a).forEach(y => {
+      satirlar.push(gruplar[y].sort((a, b) => a.x - b.x).map(o => o.s).join(" "));
+    });
+  }
+  return kumParse(satirlar);
+}
+
+async function stokUygula() {
+  if (!stokParsed || !stokParsed.length) return;
+  const mod = document.querySelector('input[name=stokMod]:checked').value;
+  const btn = document.getElementById("stokUygulaBtn");
+
+  // Sunucuya {k, a, b, m} gönderilir. Baseline'da m=kalan, mal kabulde m=gelen.
+  const kalemler = stokParsed.map(k => ({
+    k: k.k, a: k.a, b: k.b, m: mod === "baseline" ? k.kalan : k.gelen
+  }));
+
+  if (mod === "baseline" &&
+      !confirm("BASELINE: " + kalemler.length + " kalemin stoğu rapordaki Kalan'a EŞİTLENECEK.\n\n"
+             + "Bu, mevcut stok sayılarının üzerine yazar. Devam edilsin mi?")) return;
+
+  btn.disabled = true;
+  btn.textContent = "⏳ Uygulanıyor...";
+  try {
+    const fn = mod === "baseline" ? "stok_baseline" : "stok_malkabul";
+    const { data, error } = await SB.rpc(fn, { p_sifre: SIFRE, p_kalemler: kalemler });
+    if (error) throw error;
+    btn.textContent = "✅ " + (data.adet ?? "") + " kalem işlendi";
+    document.getElementById("stokDosya").value = "";
+    document.getElementById("stokOnizle").textContent = "";
+    stokParsed = null;
+    await stokGetir();
+    setTimeout(() => { btn.textContent = "Uygula"; }, 2500);
+  } catch (e) {
+    console.error(e);
+    btn.textContent = "❌ Hata";
+    alert("Uygulanamadı: " + (e.message || "bağlantı hatası"));
+    setTimeout(() => { btn.textContent = "Uygula"; btn.disabled = false; }, 2500);
+  }
 }
 </script>
 </body>

@@ -106,6 +106,18 @@ Satıra tıklanınca **sipariş detayı** açılır: her kalem bir satır, **ONA
 düzenlenebilir. Değişiklik anında kaydedilir. `0` yazılan ürün verilmedi sayılır —
 üstü çizilir, Excel'e ve envantere girmez.
 
+**📊 STOK** — sistemdeki güncel stok. Depo, LN Infor **KUM raporunu** (Excel veya PDF)
+yükleyerek stoğu günceller:
+- **Baseline** — stoğu rapordaki **Kalan**'a eşitler (haftalık / ilk kurulum, LN Infor ile hizalar)
+- **Mal kabul** — rapordaki **gelen** (Giriş Satın Alma) miktarını mevcut stoğa **ekler** (günlük)
+- Sipariş **onaylanınca** onaylanan miktarlar stoktan **otomatik düşer**; kilit açılınca geri eklenir
+
+Liste: kod, ad, birim, stok, güncelleme; düşük (≤5) sarı, sıfır/negatif kırmızı; arama kutusu.
+
+Stoğu **0/negatif** olan ürün bar/mutfak listelerinde **görünmez**. Raporda hiç geçmeyen ürün
+"stok bilgisi yok" sayılır ve normal görünür (mutfak kalemleri kaybolmaz). Bar/mutfak stok
+sayısını görmez, yalnızca tükenen ürünü göremez.
+
 **📦 KALEM ENVANTERİ** — ürün bazında çıkış kaydı. Kendi **tarih aralığı** seçicisi vardır
 (varsayılan bugün, en fazla 92 gün).
 
