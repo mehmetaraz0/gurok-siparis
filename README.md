@@ -184,12 +184,7 @@ Talepler listesi 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş gün
 | `veri.js` | Bar ürün kataloğu (`D`), Excel şablonu (`TPL_B64`), satır şablonu (`ROW2`), grup renkleri (`GC`) — *otomatik üretildi* |
 | `stil.css` | Ortak stiller |
 | `config.js` | Supabase adresi ve anon key |
-| `kurulum.sql` | İlk kurulum — bir kez |
-| `guncelleme-01.sql` | Sipariş no + depo düzeltme/onay — bir kez |
-| `guncelleme-02.sql` | Kalem envanteri (tarih aralığı sorgusu) — bir kez |
-| `guncelleme-03.sql` | Mutfaklar: CMM kodları + bölüm — bir kez |
-| `guncelleme-04.sql` | Güvenlik: kalem/miktar doğrulaması + çöp kayıt temizliği — bir kez |
-| `guncelleme-05.sql` | Kod incelemesi: kod deseni zorlaması + idempotent gönderim + numara boşluğu — bir kez |
+| `kurulum.sql` | **Tek birleşik kurulum** — tüm tablolar, fonksiyonlar, güvenlik, PIN. İdempotent; mevcut DB'de de güvenle çalışır (veri/şifre/PIN korunur) |
 
 Excel üretimi `ortak.js` içinde tek `buildExcelBlob()` fonksiyonundadır. Eski tek dosyalık
 sürümde aynı kurgu iki ayrı kopya halindeydi; artık bar da depo da aynı kodu çağırır.
@@ -198,17 +193,19 @@ sürümde aynı kurgu iki ayrı kopya halindeydi; artık bar da depo da aynı ko
 
 ### 1. Supabase
 
-Supabase panelinde **SQL Editor → New query**, sırayla:
+Supabase panelinde **SQL Editor → New query** → `kurulum.sql`'i yapıştır → **Run**.
 
-1. `kurulum.sql` — içindeki `BURAYA_SIFRE_YAZ` yerine depo şifreni yaz → **Run**
-2. `guncelleme-01.sql` → **Run**  *(şifreni değiştirmez, mevcut veriyi korur)*
-3. `guncelleme-02.sql` → **Run**  *(kalem envanteri için `depo_envanter` fonksiyonu)*
-4. `guncelleme-03.sql` → **Run**  *(mutfak kodları ve bölüm desteği)*
-5. `guncelleme-04.sql` → **Run**  *(girdi doğrulaması; test çöp kayıtlarını da temizler)*
-6. `guncelleme-05.sql` → **Run**  *(bar.html bu olmadan sipariş gönderemez — `p_istemci_id` parametresi bunda tanımlı)*
+Tek dosya her şeyi kurar (tablolar, fonksiyonlar, güvenlik, outlet PIN altyapısı).
+Sıfırdan kurulumda içindeki `BURAYA_DEPO_SIFRE` ve `BURAYA_ADMIN_SIFRE` yerlerini değiştir.
+**Mevcut bir veritabanında çalıştırmak güvenlidir** — veriler, şifreler ve PIN'ler korunur
+(şifreler `on conflict do nothing` ile dokunulmaz).
 
-Şifreyi sonra değiştirmek için `kurulum.sql` içindeki `insert into public.ayarlar ...`
-satırını yeni şifreyle tekrar çalıştırman yeterli.
+Şifreyi sonra değiştirmek için Supabase'de:
+`update ayarlar set deger = extensions.crypt('YENİ', extensions.gen_salt('bf')) where anahtar='depo_sifre';`
+(`admin_sifre` için de aynısı).
+
+Kurulum sonrası: **admin.html → 🔑 Outlet PIN'leri**'nden istediğin barlara/mutfaklara
+basit sayısal PIN ver. PIN verilmeyen outlet kod-yalnız çalışır.
 
 ### 2. GitHub Pages
 
