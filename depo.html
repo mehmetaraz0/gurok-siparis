@@ -80,6 +80,7 @@
         <div class="stok-sag">
           <input class="sb stok-ara" id="stokAra" placeholder="Ürün ara..." oninput="stokFiltre(this.value)">
           <button class="cb" style="width:auto;margin:8px 0 0;padding:8px 12px" onclick="stokKatalogDisiTemizle()">🧹 Katalog dışını temizle</button>
+          <button class="cb" style="width:auto;margin:6px 0 0;padding:8px 12px;color:#c00000;border-color:#f0b0b0" onclick="stokTumTemizle()">🗑 Tüm stoğu temizle</button>
         </div>
       </div>
 
@@ -754,6 +755,21 @@ async function stokKatalogDisiTemizle() {
   } catch (e) {
     console.error(e);
     alert("Temizlenemedi: " + (e.message || "guncelleme-07.sql çalıştırıldı mı?"));
+  }
+}
+
+// Tüm stok kayıtlarını siler (yeniden baseline yüklemeden önce temiz sayfa).
+async function stokTumTemizle() {
+  if (!confirm("TÜM stok kayıtları silinecek.\n\nBundan sonra STOK sekmesinden Baseline "
+             + "yükleyerek yeniden doldurmanız gerekir. Devam?")) return;
+  try {
+    const { data, error } = await SB.rpc("stok_temizle", { p_sifre: SIFRE });
+    if (error) throw error;
+    alert((data.silinen ?? 0) + " stok kaydı silindi. Şimdi Baseline yükleyin.");
+    await stokGetir();
+  } catch (e) {
+    console.error(e);
+    alert("Temizlenemedi: " + (e.message || "guncelleme-14.sql çalıştırıldı mı?"));
   }
 }
 
