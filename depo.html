@@ -783,21 +783,30 @@ function stokExcelOku(file) {
 async function stokPdfOku(file) {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  const satirlar = [];
+
+  // Tüm sayfaların text parçalarını topla
+  const tumItems = [];
   for (let p = 1; p <= pdf.numPages; p++) {
-    const page = await pdf.getPage(p);
-    const tc = await page.getTextContent();
-    // Aynı y konumundaki parçaları tek satır olarak grupla
-    const gruplar = {};
-    tc.items.forEach(it => {
-      const y = Math.round(it.transform[5]);
-      (gruplar[y] = gruplar[y] || []).push({ x: it.transform[4], s: it.str });
-    });
-    Object.keys(gruplar).map(Number).sort((a, b) => b - a).forEach(y => {
-      satirlar.push(gruplar[y].sort((a, b) => a.x - b.x).map(o => o.s).join(" "));
-    });
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    tc.items.forEach(it => tumItems.push({ sayfa: p, x: it.transform[4], y: it.transform[5], s: it.str }));
   }
-  return kumParse(satirlar);
+
+  // Bu KUM raporu 90° döndürülmüş: mantıksal satır sabit x'te, değişen y'de.
+  // Düz PDF'te ise sabit y, değişen x. İki yöntemi de dener, çok kalem vereni seçer.
+  const satirlariKur = (eksen, ikincil, artan) => {
+    const g = {};
+    tumItems.forEach(it => {
+      const anahtar = it.sayfa + ":" + Math.round(it[eksen]);
+      (g[anahtar] = g[anahtar] || []).push(it);
+    });
+    return Object.values(g).map(grup =>
+      grup.sort((a, b) => artan ? a[ikincil] - b[ikincil] : b[ikincil] - a[ikincil])
+          .map(o => o.s).join(" "));
+  };
+
+  const aXsatir = kumParse(satirlariKur("x", "y", true));   // döndürülmüş
+  const aYsatir = kumParse(satirlariKur("y", "x", true));   // düz
+  return aXsatir.length >= aYsatir.length ? aXsatir : aYsatir;
 }
 
 async function stokUygula() {
