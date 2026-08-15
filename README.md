@@ -90,8 +90,9 @@ o miktarın altında girerse kutu kırmızı olur, gönder butonu kapanır ve g�
 
 **Minimum stok (MİN STOK):** Admin panelindeki **MİN STOK** sütunu ürüne bir taban stok koyar
 (sipariş sınırından ayrı, yine koda bağlı). Depo bir siparişi **onaylayınca** stok bu tabanın
-altına inecekse, onay ekranında **uyarı** çıkar (ör. "KOLA: 5 → 2, min 3") — depo isterse yine
-de onaylayabilir (engel değil, uyarı).
+altına inecekse onay **REDDEDİLİR** — depo o siparişi onaylayamaz (ör. "CAY: 5 → -95, min 10").
+Onay miktarını düşürmesi ya da stok girmesi gerekir. Engel hem ekranda hem sunucuda (bypass
+edilemez) uygulanır.
 
 ## Bar kodları
 

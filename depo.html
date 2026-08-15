@@ -628,22 +628,23 @@ async function durumDegistir(yeniDurum) {
   if (yeniDurum === "onaylandi") {
     const verilmeyen = s.kalemler.filter(it => gecerliMiktar(it) === 0).length;
 
-    // Onay stoğu taban stoğun altına indirecek mi? (uyarı; engel değil)
+    // Onay stoğu taban stoğun altına indirecekse ENGELLE (onaylanamaz).
     let tabanAlti = [];
     try {
       const { data, error } = await SB.rpc("onay_stok_kontrol", { p_sifre: SIFRE, p_siparis_no: ACIK_NO });
       if (!error) tabanAlti = data || [];
     } catch (e) { /* stok/min modülü yoksa yok say */ }
 
-    let mesaj = s.siparis_no + " onaylanacak ve kilitlenecek.\n\n"
-      + (verilmeyen ? verilmeyen + " ürün verilmedi olarak işaretli.\n" : "");
     if (tabanAlti.length) {
-      mesaj += "\n⚠ Bu sipariş şu ürünleri TABAN STOĞUN ALTINA indirir:\n"
+      alert("⛔ Bu sipariş ONAYLANAMAZ.\n\nŞu ürünler taban stoğun altına iner:\n"
         + tabanAlti.map(b => "• " + b.ad + ": " + b.mevcut + " → " + b.sonra + " (min " + b.min_stok + ")").join("\n")
-        + "\n";
+        + "\n\nOnay miktarını düşürün ya da stok girin.");
+      return;
     }
-    mesaj += "\nKilitli siparişte düzeltme yapılamaz (kilidi açabilirsiniz).\n\nOnaylansın mı?";
-    if (!confirm(mesaj)) return;
+
+    if (!confirm(s.siparis_no + " onaylanacak ve kilitlenecek.\n\n"
+      + (verilmeyen ? verilmeyen + " ürün verilmedi olarak işaretli.\n" : "")
+      + "Kilitli siparişte düzeltme yapılamaz (kilidi açabilirsiniz).\n\nOnaylansın mı?")) return;
   }
 
   try {
