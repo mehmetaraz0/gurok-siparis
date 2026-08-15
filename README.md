@@ -84,10 +84,14 @@ tohumlamadan önce ve internet koparsa sistem eskisi gibi çalışır.
 Her outlet ve her mutfak-bölümü **kendi bağımsız listesi**. Liste düzenlemek eski siparişlerin
 Excel'ini etkilemez (sipariş kendi ürün bilgisini taşır).
 
-**Minimum sipariş miktarı:** Admin panelindeki **MİN** sütunu ürüne bir alt sınır koyar. Bu sınır
-ürün **koduna** bağlıdır — bir listede ayarlanınca **tüm listelerde** geçerli olur. Bar/mutfak
-o miktarın altında girerse kutu kırmızı olur, gönder butonu kapanır ve gönderim engellenir
-(düzeltmeye zorlar). Boş bırakmak sınırı kaldırır.
+**Minimum sipariş miktarı (MİN):** Admin panelindeki **MİN** sütunu ürüne bir alt sınır koyar.
+Ürün **koduna** bağlıdır — bir listede ayarlanınca **tüm listelerde** geçerli olur. Bar/mutfak
+o miktarın altında girerse kutu kırmızı olur, gönder butonu kapanır ve gönderim engellenir.
+
+**Minimum stok (MİN STOK):** Admin panelindeki **MİN STOK** sütunu ürüne bir taban stok koyar
+(sipariş sınırından ayrı, yine koda bağlı). Depo bir siparişi **onaylayınca** stok bu tabanın
+altına inecekse, onay ekranında **uyarı** çıkar (ör. "KOLA: 5 → 2, min 3") — depo isterse yine
+de onaylayabilir (engel değil, uyarı).
 
 ## Bar kodları
 
