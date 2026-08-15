@@ -325,7 +325,8 @@ function rl() {
       h += '<div class="ir' + (q ? " hq" : "") + '"'
          + ' data-n="' + htmlEsc(i.a.toLowerCase()) + '" data-c="' + htmlEsc(i.k.toLowerCase()) + '">'
          + '<span class="ic">' + htmlEsc(i.k) + '</span>'
-         + '<span class="in">' + htmlEsc(i.a) + '</span>'
+         + '<span class="in">' + htmlEsc(i.a)
+         + (i.min ? ' <span class="minlbl">en az ' + i.min + '</span>' : '') + '</span>'
          + '<span class="iu">' + htmlEsc(i.b) + '</span>'
          + '<span class="iq"><input type="number" min="0" value="' + (q || "") + '"'
          + ' class="' + (q ? "fl" : "") + (q && i.min && q < Number(i.min) ? " eksik" : "") + '"'
