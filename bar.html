@@ -14,6 +14,7 @@
   <h2>SİPARİŞ GİRİŞİ</h2>
   <p>Birim kodunuzu girin</p>
   <input type="text" id="kod" placeholder="Kod" autocomplete="off" maxlength="6">
+  <input type="password" id="pin" placeholder="PIN" autocomplete="off" maxlength="12" inputmode="numeric" style="display:none">
   <button id="girisBtn" onclick="girisYap()">Devam</button>
   <div class="err" id="kodHata"></div>
 </div>
@@ -71,6 +72,7 @@ let C = null;        // seçili outlet
 let kirli = false;   // gönderilmemiş değişiklik var mı
 let siparisId = null; // idempotency: bu sipariş denemesinin istemci kimliği
 let GIZLI = new Set(); // stoğu 0/negatif → listede gizlenecek kodlar
+let PIN = null;        // outlet PIN'i (varsa) — her siparişte gönderilir
 
 // Bir gönderim denemesi için benzersiz kimlik. Ağ koparsa aynı kimlikle tekrar
 // gönderilir; sunucu ikinci siparişi açmaz, ilkini döndürür.
@@ -106,7 +108,9 @@ function girisCoz(girilen) {
 }
 
 const kodInput = document.getElementById("kod");
+const pinInput = document.getElementById("pin");
 kodInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
+pinInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
 
 async function girisYap() {
   const err = document.getElementById("kodHata");
@@ -118,15 +122,35 @@ async function girisYap() {
     return;
   }
 
+  const kod = c.tip === "bar" ? c.o.c : c.m.c;
+  const pin = pinInput.value.trim();
+
+  // Sunucuda outlet + PIN doğrula. PIN gerekiyorsa alan açılır.
+  // outlet_giris fonksiyonu yoksa (SQL uygulanmadan) eski davranışa düşülür.
+  try {
+    const { error } = await SB.rpc("outlet_giris", { p_kod: kod, p_pin: pin || null });
+    if (error) {
+      const m = error.message || "";
+      if (/PIN/i.test(m)) {          // PIN gerekli ya da hatalı
+        pinInput.style.display = "";
+        pinInput.focus();
+        err.textContent = pin ? "PIN hatalı." : "Bu birim için PIN gerekli.";
+        return;
+      }
+      if (/Gecersiz/i.test(m)) { err.textContent = "Bu kodla bir birim bulunamadı."; return; }
+      // Fonksiyon yoksa / başka RPC hatası: PIN'siz devam et (geri uyumluluk)
+    }
+  } catch (e) { /* ağ hatası — offline akışına bırak */ }
+
   err.textContent = "";
+  PIN = pin || null;
+  sessionStorage.setItem("gurok_pin", PIN || "");
 
   if (c.tip === "bar") {
     sessionStorage.setItem("gurok_birim", c.o.c);
     await birimAc({ c: c.o.c, n: c.o.n, i: c.o.i, bl: null });
     return;
   }
-
-  // Tek bölümlü mutfak doğrudan açılır, çok bölümlü seçim ister
   if (c.m.b.length === 1) {
     await mutfakBolumAc(c.m, c.m.b[0]);
   } else {
@@ -190,16 +214,21 @@ function barDegistir() {
     return;
   }
   sessionStorage.removeItem("gurok_birim");
+  sessionStorage.removeItem("gurok_pin");
   C = null;
   kirli = false;
+  PIN = null;
   document.getElementById("ana").style.display = "none";
   document.getElementById("kilit").style.display = "";
   kodInput.value = "";
+  pinInput.value = "";
+  pinInput.style.display = "none";
   document.getElementById("kodHata").textContent = "";
   kodInput.focus();
 }
 
 // Sekme oturumunda kayıtlı birim varsa tekrar sorma (sekme kapanınca silinir)
+PIN = sessionStorage.getItem("gurok_pin") || null;
 const kayitliBirim = sessionStorage.getItem("gurok_birim");
 if (kayitliBirim) {
   const [kod, bolum] = kayitliBirim.split("|");
@@ -477,7 +506,7 @@ async function gonder() {
   try {
     const { data, error } = await SB.rpc("siparis_gonder", {
       p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler,
-      p_bolum: C.bl, p_istemci_id: siparisId
+      p_bolum: C.bl, p_istemci_id: siparisId, p_pin: PIN
     });
     if (error) throw error;
 

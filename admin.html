@@ -25,10 +25,19 @@
     <div class="hr">
       <select id="listeSec" onchange="listeYukle()"></select>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="seedBaslat()">☁ Mevcut listeleri buluta yükle</button>
+      <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="pinYonetimiAc()">🔑 Outlet PIN'leri</button>
     </div>
   </div>
 
-  <div style="padding:12px">
+  <!-- ===== Outlet PIN yönetimi ===== -->
+  <div id="pinPanel" style="display:none;padding:12px">
+    <button class="geri" onclick="pinYonetimiKapat()">← Liste düzenlemeye dön</button>
+    <div class="depo-header"><span>OUTLET PIN YÖNETİMİ</span><span class="depo-count" id="pinCount">—</span></div>
+    <p style="font-size:12px;color:#777;margin:8px 0">PIN girilen outlet, girişte ve siparişte o PIN'i ister. Boş bırakılan outlet kod-yalnız çalışır (PIN yok). Basit sayısal PIN yeterli.</p>
+    <div id="pinIcerik"><div class="em">Yükleniyor...</div></div>
+  </div>
+
+  <div id="listePanel" style="padding:12px">
     <div class="ekle-kutu">
       <b>Ürün ekle</b>
       <input id="yeniKod" placeholder="KOD (ICA02000001)" maxlength="11" style="text-transform:uppercase">
@@ -289,6 +298,58 @@ async function tasi(kod, yon) {
     if (error) throw error;
     yeniSira.forEach((k, n) => { const it = kalemBul(k); if (it) it.sira = n; });
   } catch (e) { alert("Sıra kaydedilemedi: " + (e.message || "")); await listeYukle(); }
+}
+
+/* ---- Outlet PIN yönetimi ---- */
+async function pinYonetimiAc() {
+  document.getElementById("listePanel").style.display = "none";
+  document.getElementById("pinPanel").style.display = "";
+  const kutu = document.getElementById("pinIcerik");
+  kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
+  try {
+    const { data, error } = await SB.rpc("outlet_liste", { p_sifre: SIFRE });
+    if (error) throw error;
+    const outletler = data || [];
+    document.getElementById("pinCount").textContent = outletler.length + " outlet";
+    let h = '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th>TÜR</th>'
+          + '<th>DURUM</th><th>YENİ PIN</th></tr></thead><tbody>';
+    outletler.forEach(o => {
+      h += '<tr data-kod="' + htmlEsc(o.kod) + '">'
+         + '<td class="mono">' + htmlEsc(kisaKod(o.kod)) + '</td>'
+         + '<td>' + htmlEsc(o.ad) + '</td>'
+         + '<td style="font-size:11px;color:#888">' + htmlEsc(o.tur) + '</td>'
+         + '<td>' + (o.pinli ? '<span class="rz onay">🔒 PIN var</span>' : '<span class="rz talep">açık</span>') + '</td>'
+         + '<td><input class="adm-inp pin" type="text" inputmode="numeric" maxlength="12" placeholder="PIN yaz / boş=kaldır" onchange="pinKaydet(this)"></td>'
+         + '</tr>';
+    });
+    kutu.innerHTML = h + '</tbody></table>';
+  } catch (e) {
+    kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata")
+      + '<br><small>kurulum.sql (birleşik) çalıştırıldı mı?</small></div>';
+  }
+}
+
+function pinYonetimiKapat() {
+  document.getElementById("pinPanel").style.display = "none";
+  document.getElementById("listePanel").style.display = "";
+}
+
+async function pinKaydet(inp) {
+  const kod = inp.closest("tr").dataset.kod;
+  const pin = inp.value.trim();
+  if (pin && !/^[0-9]{3,12}$/.test(pin)) { alert("PIN 3-12 haneli sayı olmalı (ya da boş bırakın)."); inp.value = ""; return; }
+  inp.disabled = true;
+  try {
+    const { error } = await SB.rpc("outlet_pin_ayarla", { p_sifre: SIFRE, p_kod: kod, p_pin: pin || null });
+    if (error) throw error;
+    const durumTd = inp.closest("tr").children[3];
+    durumTd.innerHTML = pin ? '<span class="rz onay">🔒 PIN var</span>' : '<span class="rz talep">açık</span>';
+    inp.value = "";
+    inp.classList.add("ok"); setTimeout(() => inp.classList.remove("ok"), 1000);
+  } catch (e) {
+    alert("Kaydedilemedi: " + (e.message || ""));
+  }
+  inp.disabled = false;
 }
 
 /* ---- Tohumlama ---- */
