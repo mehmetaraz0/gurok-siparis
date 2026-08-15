@@ -42,10 +42,23 @@
     <div class="sekmeler">
       <button class="sk aktif" id="skTalep" onclick="sekmeGec('talep')">📋 TALEPLER</button>
       <button class="sk" id="skEnv" onclick="sekmeGec('env')">📦 KALEM ENVANTERİ</button>
+      <button class="sk" id="skTuk" onclick="sekmeGec('tuk')">🍽 TÜKETİM</button>
       <button class="sk" id="skStok" onclick="sekmeGec('stok')">📊 STOK</button>
     </div>
 
     <div id="talepler"></div>
+
+    <div id="tuketim" style="display:none">
+      <div class="env-arac">
+        <label>Başlangıç <input type="date" id="tukBas"></label>
+        <label>Bitiş <input type="date" id="tukBit"></label>
+        <button class="db" onclick="tuketimGetir()">Getir</button>
+        <span class="env-hazir" id="tukHazir"></span>
+        <input class="sb env-ara" id="tukAra" placeholder="Ürün ara..." oninput="tukFiltre(this.value)">
+      </div>
+      <div class="tuk-sekmeler" id="tukSekmeler"></div>
+      <div id="tukIcerik"><div class="em">Tarih aralığı seçip <b>Getir</b>'e basın — onaylanan siparişlerden tüketim kategorilere ayrılır.</div></div>
+    </div>
 
     <div id="envanter" style="display:none">
       <div class="env-arac">
@@ -113,6 +126,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="veri.js"></script>
 <script src="mutfak.js"></script>
+<script src="tuketim.js"></script>
 <script src="config.js"></script>
 <script src="ortak.js"></script>
 <script>
@@ -128,6 +142,8 @@ let SIPARISLER = [];            // seçili günün siparişleri (talepler ekran�
 let ACIK_NO = null;             // detayı açık siparişin numarası (null ise liste ekranı)
 let STOK = null;                // stok listesi (null = henüz çekilmedi)
 let stokParsed = null;          // yüklenen dosyadan ayrıştırılan kalemler
+let TUKETIM = null;             // tüketim raporu verisi (null = henüz çekilmedi)
+let TUK_AKTIF = null;           // seçili tüketim kategorisi
 let ENVANTER = null;            // envanter aralığının siparişleri (null = henüz çekilmedi)
 let ACIK_URUN = null;           // hareket detayı açık ürün kodu (null ise liste ekranı)
 let zamanlayici = null;
@@ -177,6 +193,8 @@ function basla() {
   document.getElementById("tarih").value = bugun();
   document.getElementById("envBas").value = bugun();
   document.getElementById("envBit").value = bugun();
+  document.getElementById("tukBas").value = bugun();
+  document.getElementById("tukBit").value = bugun();
   yenile();
   zamanlayici = setInterval(otoYenile, 15000);
 }
@@ -239,12 +257,15 @@ function ciz() {
 function sekmeGec(hangi) {
   document.getElementById("talepler").style.display  = hangi === "talep" ? "" : "none";
   document.getElementById("envanter").style.display  = hangi === "env"   ? "" : "none";
+  document.getElementById("tuketim").style.display   = hangi === "tuk"   ? "" : "none";
   document.getElementById("stok").style.display      = hangi === "stok"  ? "" : "none";
   document.getElementById("skTalep").classList.toggle("aktif", hangi === "talep");
   document.getElementById("skEnv").classList.toggle("aktif",   hangi === "env");
+  document.getElementById("skTuk").classList.toggle("aktif",   hangi === "tuk");
   document.getElementById("skStok").classList.toggle("aktif",  hangi === "stok");
 
   if (hangi === "env"  && !ENVANTER) envanterGetir();
+  if (hangi === "tuk"  && !TUKETIM)  tuketimGetir();
   if (hangi === "stok" && !STOK)     stokGetir();
 }
 
@@ -687,6 +708,122 @@ async function detayExcel() {
     btn.classList.remove("ok");
     btn.disabled = false;
   }, 2500);
+}
+
+/* ================= TÜKETİM ================= */
+
+async function tuketimGetir() {
+  const bas = document.getElementById("tukBas").value || bugun();
+  const bit = document.getElementById("tukBit").value || bugun();
+  const kutu = document.getElementById("tukIcerik");
+  kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
+  document.getElementById("tukHazir").textContent = "";
+  try {
+    const [env, stk] = await Promise.all([
+      SB.rpc("depo_envanter", { p_sifre: SIFRE, p_bas: bas, p_bit: bit }),
+      SB.rpc("stok_liste",   { p_sifre: SIFRE })
+    ]);
+    if (env.error) throw env.error;
+    const orders = env.data || [];
+    const stokMap = {};
+    if (!stk.error) (stk.data || []).forEach(s => stokMap[s.kod] = Number(s.miktar));
+
+    // Onaylanan siparişlerden tüketim (kod -> toplam onay miktarı)
+    const urun = {};
+    let onayli = 0;
+    orders.forEach(s => {
+      if (s.durum !== "onaylandi") return;
+      onayli++;
+      s.kalemler.forEach(it => {
+        const m = gecerliMiktar(it);
+        if (m <= 0) return;
+        if (!urun[it.k]) urun[it.k] = { kod: it.k, ad: it.a, birim: it.b, tuketim: 0 };
+        urun[it.k].tuketim += m;
+      });
+    });
+
+    // Skill kategorilerine yerleştir
+    const kategoriler = {};
+    let tuketilen = 0;
+    Object.values(urun).forEach(u => {
+      const r = tuketimKategori(u.kod, u.ad);
+      if (!r) return;
+      tuketilen++;
+      if (!kategoriler[r.tab]) kategoriler[r.tab] = {};
+      const key = r.alt || "_";
+      (kategoriler[r.tab][key] = kategoriler[r.tab][key] || []).push({
+        ...u, kalan: stokMap[u.kod] != null ? stokMap[u.kod] : null
+      });
+    });
+
+    TUKETIM = { kategoriler };
+    document.getElementById("tukHazir").textContent =
+      onayli + " onaylı sipariş · " + tuketilen + " ürün tüketildi";
+    TUK_AKTIF = TUK_KATEGORILER.find(t => kategoriler[t]) || null;
+    cizTuketim();
+  } catch (e) {
+    console.error(e);
+    TUKETIM = null;
+    kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata") + '</div>';
+  }
+}
+
+function cizTuketim() {
+  const sekmeler = document.getElementById("tukSekmeler");
+  const kutu = document.getElementById("tukIcerik");
+  if (!TUKETIM) return;
+  const kats = TUKETIM.kategoriler;
+  const doluKats = TUK_KATEGORILER.filter(t => kats[t]);
+
+  if (!doluKats.length) {
+    sekmeler.innerHTML = "";
+    kutu.innerHTML = '<div class="em">Bu aralıkta onaylı sipariş / tüketim yok.</div>';
+    return;
+  }
+
+  // Kategori sekmeleri (Excel alt sayfaları gibi)
+  sekmeler.innerHTML = doluKats.map(t => {
+    const say = Object.values(kats[t]).reduce((n, l) => n + l.length, 0);
+    return '<button class="tuk-sk' + (t === TUK_AKTIF ? " aktif" : "") + '"'
+      + ' onclick="tuketimSekmeGec(this.dataset.k)" data-k="' + htmlEsc(t) + '">'
+      + htmlEsc(t) + ' <span>' + say + '</span></button>';
+  }).join("");
+
+  // Seçili kategori
+  const kat = kats[TUK_AKTIF] || {};
+  const altSira = TUK_ALT_SIRA[TUK_AKTIF];
+  let h = '<div class="depo-header"><span>' + htmlEsc(TUK_AKTIF) + '</span>'
+        + '<span class="depo-count">' + Object.values(kat).reduce((n,l)=>n+l.length,0) + ' ürün</span></div>'
+        + '<table class="tuk-tbl"><thead><tr><th>KOD</th><th>ÜRÜN ADI</th><th>BR</th>'
+        + '<th>TÜKETİM</th><th>KALAN STOK</th></tr></thead><tbody>';
+
+  const bloklar = altSira
+    ? altSira.filter(a => kat[a]).map(a => [a, kat[a]])
+    : Object.entries(kat);
+
+  bloklar.forEach(([alt, list]) => {
+    if (altSira) h += '<tr class="tuk-alt"><td colspan="5">' + htmlEsc(alt) + ' (' + list.length + ')</td></tr>';
+    list.slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")).forEach(u => {
+      h += '<tr data-ara="' + htmlEsc((u.ad + " " + u.kod).toLowerCase()) + '">'
+         + '<td class="mono">' + htmlEsc(u.kod) + '</td>'
+         + '<td>' + htmlEsc(u.ad) + '</td>'
+         + '<td style="text-align:center">' + htmlEsc(u.birim) + '</td>'
+         + '<td class="say tuk-mik">' + u.tuketim + '</td>'
+         + '<td class="say">' + (u.kalan != null ? (Number.isInteger(u.kalan) ? u.kalan : u.kalan.toFixed(2)) : "—") + '</td>'
+         + '</tr>';
+    });
+  });
+  kutu.innerHTML = h + '</tbody></table>';
+  tukFiltre(document.getElementById("tukAra").value);
+}
+
+function tuketimSekmeGec(kat) { TUK_AKTIF = kat; cizTuketim(); }
+
+function tukFiltre(t) {
+  t = (t || "").toLowerCase().trim();
+  document.querySelectorAll("#tukIcerik tr[data-ara]").forEach(tr => {
+    tr.style.display = (!t || tr.dataset.ara.includes(t)) ? "" : "none";
+  });
 }
 
 /* ================= STOK ================= */

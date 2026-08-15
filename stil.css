@@ -143,6 +143,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .rz.talep{background:#fff8e1;color:#b26500;border:1px solid #ffe0a3}
 .rz.onay{background:#e3f5e8;color:#1a6b3c;border:1px solid #a8d5b8}
 
+/* ===== Depo: tüketim (kategori sekmeleri) ===== */
+.tuk-sekmeler{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px}
+.tuk-sk{padding:7px 12px;background:#fff;color:#666;border:1px solid #e0e0e0;border-radius:7px;
+        font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+.tuk-sk:hover{color:#1e3a5f;border-color:#b9c7d6}
+.tuk-sk.aktif{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+.tuk-sk span{font-size:10px;opacity:.7;margin-left:2px}
+.tuk-tbl{width:100%;border-collapse:collapse;font-size:12px;background:#fff}
+.tuk-tbl th{background:#1a1a1a;color:#fff;padding:8px;text-align:left;font-size:11px;position:sticky;top:0}
+.tuk-tbl td{padding:6px 9px;border-bottom:1px solid #f0f0f0}
+.tuk-tbl .mono{font-family:monospace;font-size:10px;color:#666}
+.tuk-tbl .say{text-align:center}
+.tuk-tbl .tuk-mik{font-weight:700;color:#c00000;font-size:14px}
+.tuk-tbl tr.tuk-alt td{background:#595959;color:#fff;font-weight:700;font-size:11px;padding:5px 10px;letter-spacing:.3px}
+
 /* ===== Depo: kalem envanteri ===== */
 .env-arac{background:#fff;border-radius:8px;padding:12px 14px;margin-bottom:10px;
           box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;align-items:center;
