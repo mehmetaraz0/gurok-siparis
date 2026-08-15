@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liste Yönetimi — GUROK</title>
+<link rel="stylesheet" href="stil.css">
+</head>
+<body>
+
+<!-- ===== Şifre ===== -->
+<div class="kilit" id="kilit">
+  <h2>🛠 LİSTE YÖNETİMİ</h2>
+  <p>Yönetici şifresini girin</p>
+  <input type="password" id="sifre" placeholder="Şifre" autocomplete="current-password">
+  <button id="girisBtn" onclick="giris()">Giriş</button>
+  <div class="err" id="hata"></div>
+</div>
+
+<!-- ===== Ana ===== -->
+<div id="ana" style="display:none">
+  <div class="hdr">
+    <h1>LİSTE YÖNETİMİ</h1>
+    <div class="hr">
+      <select id="listeSec" onchange="listeYukle()"></select>
+      <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="seedBaslat()">☁ Mevcut listeleri buluta yükle</button>
+    </div>
+  </div>
+
+  <div style="padding:12px">
+    <div class="ekle-kutu">
+      <b>Ürün ekle</b>
+      <input id="yeniKod" placeholder="KOD (ICA02000001)" maxlength="11" style="text-transform:uppercase">
+      <input id="yeniAd" placeholder="Ürün adı">
+      <input id="yeniBirim" placeholder="birim" list="birimListe" style="width:80px">
+      <input id="yeniGrup" placeholder="grup" list="grupListe" style="width:180px">
+      <button class="gb" onclick="urunEkle()">+ Ekle</button>
+    </div>
+    <datalist id="grupListe"></datalist>
+    <datalist id="birimListe"></datalist>
+
+    <div class="depo-header">
+      <span id="listeBaslik">Liste seçin</span>
+      <span class="depo-count" id="listeCount">—</span>
+    </div>
+    <div id="listeIcerik"><div class="em">Yukarıdan bir liste seçin.</div></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="veri.js"></script>
+<script src="mutfak.js"></script>
+<script src="config.js"></script>
+<script src="ortak.js"></script>
+<script>
+let SIFRE = null;
+let LISTE = null;       // seçili liste kimliği
+let KALEMLER = [];      // seçili listenin kalemleri (ekranda görülen sıra)
+
+/* ---- Giriş ---- */
+const kayitli = sessionStorage.getItem("gurok_admin_sifre");
+if (kayitli) { SIFRE = kayitli; basla(); }
+document.getElementById("sifre").addEventListener("keydown", e => { if (e.key === "Enter") giris(); });
+
+async function giris() {
+  const inp = document.getElementById("sifre"), btn = document.getElementById("girisBtn"), err = document.getElementById("hata");
+  const d = inp.value.trim();
+  if (!d) return;
+  btn.disabled = true; btn.textContent = "..."; err.textContent = "";
+  try {
+    const { error } = await SB.rpc("katalog_giris", { p_sifre: d });
+    if (error) throw error;
+    SIFRE = d; sessionStorage.setItem("gurok_admin_sifre", d); basla();
+  } catch (e) {
+    err.textContent = (e.message || "").includes("Sifre") ? "Şifre hatalı." : "Bağlantı kurulamadı.";
+    inp.value = ""; inp.focus();
+  }
+  btn.disabled = false; btn.textContent = "Giriş";
+}
+
+function basla() {
+  document.getElementById("kilit").style.display = "none";
+  document.getElementById("ana").style.display = "";
+  dolduPickerlar();
+}
+
+/* ---- Picker + datalist ---- */
+function dolduPickerlar() {
+  const sel = document.getElementById("listeSec");
+  let h = '<option value="">— Liste seçin —</option>';
+  if (typeof D !== "undefined")
+    D.forEach(o => h += '<option value="' + o.c + '">' + htmlEsc(kisaKod(o.c) + " — " + o.n) + '</option>');
+  if (typeof M !== "undefined")
+    M.forEach(m => m.b.forEach(b =>
+      h += '<option value="' + m.c + "|" + b + '">' + htmlEsc(kisaKod(m.c) + " — " + m.n + " · " + b) + '</option>'));
+  sel.innerHTML = h;
+
+  // Grup datalist: bar GC + mutfak MUTFAK_KAT
+  const gruplar = new Set();
+  if (typeof GC !== "undefined") Object.keys(GC).forEach(g => gruplar.add(g));
+  if (typeof MUTFAK_KAT !== "undefined") Object.keys(MUTFAK_KAT).forEach(g => gruplar.add(g));
+  document.getElementById("grupListe").innerHTML =
+    [...gruplar].sort().map(g => '<option value="' + htmlEsc(g) + '">').join("");
+  document.getElementById("birimListe").innerHTML =
+    ["ad", "kg", "kol", "pk", "bot", "l", "tnk", "ktu", "fic", "bdn", "TRB", "tkm"].map(b => '<option value="' + b + '">').join("");
+}
+
+/* ---- Liste yükle ---- */
+async function listeYukle() {
+  LISTE = document.getElementById("listeSec").value;
+  const kutu = document.getElementById("listeIcerik");
+  if (!LISTE) { kutu.innerHTML = '<div class="em">Yukarıdan bir liste seçin.</div>'; document.getElementById("listeCount").textContent = "—"; return; }
+
+  document.getElementById("listeBaslik").textContent = document.getElementById("listeSec").selectedOptions[0].textContent;
+  kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
+  try {
+    const { data, error } = await SB.rpc("katalog_getir", { p_liste: LISTE });
+    if (error) throw error;
+    KALEMLER = data || [];
+    cizListe();
+  } catch (e) {
+    kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata")
+      + '<br><small>guncelleme-08.sql çalıştırıldı mı? Liste boşsa üstteki "buluta yükle" ile tohumlayın.</small></div>';
+  }
+}
+
+function cizListe() {
+  const kutu = document.getElementById("listeIcerik");
+  document.getElementById("listeCount").textContent = KALEMLER.length + " ürün";
+  if (!KALEMLER.length) {
+    kutu.innerHTML = '<div class="em">Bu liste boş. Ürün ekleyin ya da üstteki "buluta yükle" ile tohumlayın.</div>';
+    return;
+  }
+
+  // Bar/mutfak ile aynı sırada göster: grup + grup içi sira
+  const mutfakMi = LISTE.includes("|");
+  const bloklar = grupla(KALEMLER, mutfakMi ? mutfakKatIndex : grupIndex);
+
+  let h = '<table class="adm-tbl"><thead><tr>'
+        + '<th>KOD</th><th>ÜRÜN ADI</th><th>BR</th><th>GRUP</th><th>SIRA</th><th>SİL</th>'
+        + '</tr></thead><tbody>';
+  bloklar.forEach(([g, items]) => {
+    h += '<tr class="adm-grp"><td colspan="6">' + htmlEsc(g || "—") + ' (' + items.length + ')</td></tr>';
+    items.forEach((it, n) => {
+      h += '<tr data-kod="' + htmlEsc(it.k) + '">'
+         + '<td class="mono">' + htmlEsc(it.k) + '</td>'
+         + '<td><input class="adm-inp ad" value="' + htmlEsc(it.a) + '" onchange="alanKaydet(this,\'ad\')"></td>'
+         + '<td><input class="adm-inp br" value="' + htmlEsc(it.b) + '" list="birimListe" onchange="alanKaydet(this,\'birim\')"></td>'
+         + '<td><input class="adm-inp gr" value="' + htmlEsc(it.g || "") + '" list="grupListe" onchange="alanKaydet(this,\'grup\')"></td>'
+         + '<td class="adm-sira">'
+         + '<button onclick="tasi(\'' + htmlEsc(it.k) + '\',-1)"' + (n === 0 ? " disabled" : "") + '>↑</button>'
+         + '<button onclick="tasi(\'' + htmlEsc(it.k) + '\',1)"' + (n === items.length - 1 ? " disabled" : "") + '>↓</button>'
+         + '</td>'
+         + '<td><button class="adm-sil" onclick="urunCikar(\'' + htmlEsc(it.k) + '\')">✕</button></td>'
+         + '</tr>';
+    });
+  });
+  kutu.innerHTML = h + '</tbody></table>';
+}
+
+function kalemBul(kod) { return KALEMLER.find(k => k.k === kod); }
+
+/* ---- Alan düzelt ---- */
+async function alanKaydet(inp, alan) {
+  const kod = inp.closest("tr").dataset.kod;
+  const it = kalemBul(kod);
+  if (!it) return;
+  const deger = inp.value.trim();
+  if (alan === "ad" && !deger) { inp.value = it.a; return; }
+
+  inp.disabled = true;
+  try {
+    const { error } = await SB.rpc("katalog_duzelt", {
+      p_sifre: SIFRE, p_liste: LISTE, p_kod: kod,
+      p_ad:  alan === "ad"    ? deger : it.a,
+      p_birim: alan === "birim" ? deger : it.b,
+      p_grup:  alan === "grup"  ? deger : (it.g || "")
+    });
+    if (error) throw error;
+    if (alan === "ad") it.a = deger; else if (alan === "birim") it.b = deger; else it.g = deger || null;
+    inp.classList.add("ok"); setTimeout(() => inp.classList.remove("ok"), 1000);
+    if (alan === "grup") cizListe();   // grup değişince blok yeniden dizilir
+  } catch (e) {
+    alert("Kaydedilemedi: " + (e.message || "")); inp.disabled = false; return;
+  }
+  inp.disabled = false;
+}
+
+/* ---- Ekle ---- */
+async function urunEkle() {
+  const kod = document.getElementById("yeniKod").value.trim().toUpperCase();
+  const ad = document.getElementById("yeniAd").value.trim();
+  const birim = document.getElementById("yeniBirim").value.trim() || "ad";
+  const grup = document.getElementById("yeniGrup").value.trim();
+  if (!LISTE) { alert("Önce bir liste seçin."); return; }
+  if (!/^[A-Z]{3}[0-9]{8}$/.test(kod)) { alert("Kod biçimi: 3 harf + 8 rakam (ör. ICA02000001)"); return; }
+  if (!ad) { alert("Ürün adı gerekli."); return; }
+
+  try {
+    const { error } = await SB.rpc("katalog_ekle", {
+      p_sifre: SIFRE, p_liste: LISTE, p_kod: kod, p_ad: ad, p_birim: birim, p_grup: grup });
+    if (error) throw error;
+    ["yeniKod", "yeniAd", "yeniBirim", "yeniGrup"].forEach(id => document.getElementById(id).value = "");
+    await listeYukle();
+  } catch (e) { alert("Eklenemedi: " + (e.message || "")); }
+}
+
+/* ---- Çıkar ---- */
+async function urunCikar(kod) {
+  const it = kalemBul(kod);
+  if (!confirm((it ? it.a : kod) + "\n\nBu ürün listeden çıkarılacak. Emin misiniz?")) return;
+  try {
+    const { error } = await SB.rpc("katalog_cikar", { p_sifre: SIFRE, p_liste: LISTE, p_kod: kod });
+    if (error) throw error;
+    KALEMLER = KALEMLER.filter(k => k.k !== kod);
+    cizListe();
+  } catch (e) { alert("Çıkarılamadı: " + (e.message || "")); }
+}
+
+/* ---- Sıra taşı (grup içinde) ---- */
+async function tasi(kod, yon) {
+  const mutfakMi = LISTE.includes("|");
+  const bloklar = grupla(KALEMLER, mutfakMi ? mutfakKatIndex : grupIndex);
+  // Kalemin bulunduğu grubu ve grup içi komşusunu bul
+  for (const [, items] of bloklar) {
+    const i = items.findIndex(x => x.k === kod);
+    if (i < 0) continue;
+    const j = i + yon;
+    if (j < 0 || j >= items.length) return;
+    // İki kalemin sira'sını takas et
+    const a = kalemBul(items[i].k), b = kalemBul(items[j].k);
+    const t = a.sira; a.sira = b.sira; b.sira = t;
+    break;
+  }
+  cizListe();
+  // Yeni tam sırayı kaydet (grup + grup içi sira düzeninde)
+  const yeniSira = grupla(KALEMLER, mutfakMi ? mutfakKatIndex : grupIndex).flatMap(([, l]) => l.map(x => x.k));
+  try {
+    const { error } = await SB.rpc("katalog_sira", { p_sifre: SIFRE, p_liste: LISTE, p_kodlar: yeniSira });
+    if (error) throw error;
+    yeniSira.forEach((k, n) => { const it = kalemBul(k); if (it) it.sira = n; });
+  } catch (e) { alert("Sıra kaydedilemedi: " + (e.message || "")); await listeYukle(); }
+}
+
+/* ---- Tohumlama ---- */
+async function seedBaslat() {
+  const listeler = statikListeler();
+  if (!confirm("Mevcut " + listeler.length + " liste (bar + mutfak) buluta yüklenecek.\n\n"
+             + "Zaten bulutta olan aynı listelerin ÜZERİNE yazılır. Devam?")) return;
+  const btn = event.target;
+  btn.disabled = true;
+  let ok = 0;
+  for (const { liste, kalemler } of listeler) {
+    btn.textContent = "☁ " + (ok + 1) + "/" + listeler.length + " " + liste;
+    try {
+      const { error } = await SB.rpc("katalog_seed", { p_sifre: SIFRE, p_liste: liste, p_kalemler: kalemler });
+      if (error) throw error;
+      ok++;
+    } catch (e) { console.error(liste, e); }
+  }
+  btn.textContent = "✅ " + ok + "/" + listeler.length + " liste yüklendi";
+  setTimeout(() => { btn.textContent = "☁ Mevcut listeleri buluta yükle"; btn.disabled = false; }, 3000);
+  if (LISTE) listeYukle();
+}
+</script>
+</body>
+</html>

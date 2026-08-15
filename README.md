@@ -69,6 +69,21 @@ Aynı listeyi kullanan M201 ve M204'ün taslakları ve siparişleri birbirinden 
 `CMM201 → SAHİL KAHVALTI`, `CMM201 → SAHİL PIZZA`, `CMM203 Personel Mutfağı`,
 `CMM205 Club Lojman Personel Yemekhanesi`
 
+## Liste yönetimi (admin)
+
+Bar/mutfak ürün listeleri **Supabase'de** tutulur ve `admin.html`'den, **ayrı bir yönetici
+şifresiyle** düzenlenir (depo şifresinden farklı). Bar/mutfak açılışta listesini buluttan
+çeker; **bulut boşsa veya ulaşılamazsa gömülü `veri.js`/`mutfak.js` listesine düşer** —
+tohumlamadan önce ve internet koparsa sistem eskisi gibi çalışır.
+
+`admin.html` → şifre → liste seç (B315, M201·KAHVALTI…) →
+- **Ekle:** kod (`^[A-Z]{3}[0-9]{8}$`, gerçek LN Infor kodu) + ad + birim + grup
+- **Çıkar / Düzelt / Sıra (↑↓, grup içinde)**
+- **☁ Mevcut listeleri buluta yükle:** ilk kurulumda tüm listeleri (bugünkü içerik) buluta basar
+
+Her outlet ve her mutfak-bölümü **kendi bağımsız listesi**. Liste düzenlemek eski siparişlerin
+Excel'ini etkilemez (sipariş kendi ürün bilgisini taşır).
+
 ## Bar kodları
 
 Barlar **B**, mutfaklar **M** ile başlar. Örnek kodlar giriş ekranında **gösterilmez** —

@@ -54,6 +54,46 @@ function tarihSaat(ts) {
        + " " + saat(ts);
 }
 
+/* ---------- Düzenlenebilir katalog ---------- */
+
+// Liste kimliği: bar için outlet kodu, mutfak için "kod|bölüm"
+function listeKimlik(kod, bolum) {
+  return bolum ? kod + "|" + bolum : kod;
+}
+
+// Bir listenin ürünlerini buluttan çeker. Bulut boşsa/ulaşılamazsa null döner
+// ve çağıran gömülü (veri.js/mutfak.js) listeye düşer.
+async function katalogGetir(liste) {
+  try {
+    const { data, error } = await SB.rpc("katalog_getir", { p_liste: liste });
+    if (error) throw error;
+    return (Array.isArray(data) && data.length) ? data : null;
+  } catch (e) {
+    console.error("katalog_getir:", e.message || e);
+    return null;
+  }
+}
+
+// Statik veri.js/mutfak.js'ten tüm liste kimliklerini ve kalemlerini üretir
+// (admin tohumlaması için). Dönen: [{liste, kalemler:[{k,a,b,g,sira}]}]
+function statikListeler() {
+  const out = [];
+  if (typeof D !== "undefined") {
+    D.forEach(o => {
+      const sirali = grupluSirala(o.i).map((i, n) => ({ k: i.k, a: i.a, b: i.b, g: i.g, sira: n }));
+      out.push({ liste: o.c, kalemler: sirali });
+    });
+  }
+  if (typeof M !== "undefined" && typeof MUTFAK_LISTE !== "undefined") {
+    M.forEach(m => m.b.forEach(bolum => {
+      const liste = MUTFAK_LISTE[bolum] || [];
+      const sirali = grupluSirala(liste, mutfakKatIndex).map((i, n) => ({ k: i.k, a: i.a, b: i.b, g: i.g, sira: n }));
+      out.push({ liste: m.c + "|" + bolum, kalemler: sirali });
+    }));
+  }
+  return out;
+}
+
 /* ---------- Stok ---------- */
 
 // Bar + mutfak katalogundaki tüm ürün kodları. Stok yalnızca bu kalemler için
@@ -274,7 +314,14 @@ function grupla(kalemler, indexFn) {
 
   return [...gruplar.entries()]
     .sort((a, b) => (idx(a[0]) - idx(b[0])) || a[0].localeCompare(b[0], "tr"))
-    .map(([g, list]) => [g, list.slice().sort((x, y) => x.a.localeCompare(y.a, "tr"))]);
+    .map(([g, list]) => [g, list.slice().sort(kalemSirala)]);
+}
+
+// Grup içi sıra: elle sıra (sira) verilmişse ona göre, yoksa ürün adına göre.
+function kalemSirala(x, y) {
+  const sx = x.sira, sy = y.sira;
+  if (sx != null && sy != null && sx !== sy) return sx - sy;
+  return x.a.localeCompare(y.a, "tr");
 }
 
 // Gruplanmış sırayla düz liste (Excel satır sırası da bu olur)

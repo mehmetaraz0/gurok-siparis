@@ -172,6 +172,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .ozet-kutu.bekleyen b{color:#b26500}
 .detay-tbl tr.bekleyen-sat{background:#fffaf0}
 
+/* ===== Admin: liste yönetimi ===== */
+.ekle-kutu{background:#fff;border-radius:8px;padding:12px 14px;margin-bottom:10px;
+           box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ekle-kutu > b{font-size:13px;color:#1e3a5f;margin-right:4px}
+.ekle-kutu input{padding:8px 10px;border:2px solid #ddd;border-radius:6px;font-size:13px}
+.ekle-kutu input:focus{border-color:#2e75b6;outline:none}
+.ekle-kutu #yeniAd{flex:1;min-width:160px}
+.adm-tbl{width:100%;border-collapse:collapse;font-size:12px;background:#fff}
+.adm-tbl th{background:#1a1a1a;color:#fff;padding:8px;text-align:left;font-size:11px;position:sticky;top:0;z-index:2}
+.adm-tbl td{padding:5px 8px;border-bottom:1px solid #f0f0f0}
+.adm-tbl .mono{font-family:monospace;font-size:10px;color:#666;white-space:nowrap}
+.adm-grp td{background:#305496;color:#fff;font-weight:700;font-size:11px;padding:5px 10px}
+.adm-inp{width:100%;padding:5px 6px;border:1px solid #e0e0e0;border-radius:4px;font-size:12px}
+.adm-inp:focus{border-color:#2e75b6;outline:none;background:#fffde7}
+.adm-inp.ok{border-color:#2e7d32;background:#e3f5e8}
+.adm-inp.br{width:64px}
+.adm-sira{white-space:nowrap;text-align:center}
+.adm-sira button{border:1px solid #ccc;background:#f5f5f5;border-radius:4px;cursor:pointer;
+                 width:26px;height:26px;font-size:13px;margin:0 1px}
+.adm-sira button:hover:not(:disabled){background:#e0e8f0}
+.adm-sira button:disabled{opacity:.3;cursor:default}
+.adm-sil{border:none;background:#fdeaea;color:#c00000;border-radius:5px;cursor:pointer;
+         width:28px;height:28px;font-size:13px;font-weight:700}
+.adm-sil:hover{background:#c00000;color:#fff}
+
 /* ===== Depo: stok ===== */
 .stok-arac{background:#fff;border-radius:8px;padding:14px;margin-bottom:10px;
            box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}

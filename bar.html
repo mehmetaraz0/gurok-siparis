@@ -160,6 +160,11 @@ async function birimAc(birim) {
   document.getElementById("ana").style.display = "";
   document.getElementById("outletAd").textContent =
     kisaKod(C.c) + " — " + C.n + (C.bl ? " · " + C.bl : "");
+  document.getElementById("lp").innerHTML = '<div class="em">Yükleniyor...</div>';
+
+  // Listeyi buluttan çek; bulut boş/erişilemezse gömülü liste kullanılır.
+  const bulut = await katalogGetir(anahtar());
+  if (bulut) C = { ...C, i: bulut };
 
   GIZLI = await stokGizliYukle();   // stoğu biten ürünleri gizle
   yukle();
