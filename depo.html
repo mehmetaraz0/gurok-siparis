@@ -793,28 +793,70 @@ function cizTuketim() {
   const kat = kats[TUK_AKTIF] || {};
   const altSira = TUK_ALT_SIRA[TUK_AKTIF];
   let h = '<div class="depo-header"><span>' + htmlEsc(TUK_AKTIF) + '</span>'
-        + '<span class="depo-count">' + Object.values(kat).reduce((n,l)=>n+l.length,0) + ' ürün</span></div>'
+        + '<span><span class="depo-count">' + Object.values(kat).reduce((n,l)=>n+l.length,0) + ' ürün</span>'
+        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:8px" onclick="tukKategoriExcel()">⬇ Excel indir</button></span></div>'
         + '<table class="tuk-tbl"><thead><tr><th>KOD</th><th>ÜRÜN ADI</th><th>BR</th>'
-        + '<th>TÜKETİM</th><th>KALAN STOK</th></tr></thead><tbody>';
+        + '<th>TÜKETİM</th><th>KALAN STOK</th><th>SİPARİŞ</th></tr></thead><tbody>';
 
   const bloklar = altSira
     ? altSira.filter(a => kat[a]).map(a => [a, kat[a]])
     : Object.entries(kat);
 
   bloklar.forEach(([alt, list]) => {
-    if (altSira) h += '<tr class="tuk-alt"><td colspan="5">' + htmlEsc(alt) + ' (' + list.length + ')</td></tr>';
+    if (altSira) h += '<tr class="tuk-alt"><td colspan="6">' + htmlEsc(alt) + ' (' + list.length + ')</td></tr>';
     list.slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")).forEach(u => {
+      const sip = TUK_SIPARIS[u.kod] || "";
       h += '<tr data-ara="' + htmlEsc((u.ad + " " + u.kod).toLowerCase()) + '">'
          + '<td class="mono">' + htmlEsc(u.kod) + '</td>'
          + '<td>' + htmlEsc(u.ad) + '</td>'
          + '<td style="text-align:center">' + htmlEsc(u.birim) + '</td>'
          + '<td class="say tuk-mik">' + u.tuketim + '</td>'
          + '<td class="say">' + (u.kalan != null ? (Number.isInteger(u.kalan) ? u.kalan : u.kalan.toFixed(2)) : "—") + '</td>'
+         + '<td class="say"><input class="tuk-sip" type="number" min="0" value="' + sip + '"'
+         + ' data-k="' + htmlEsc(u.kod) + '" onchange="tukSipKaydet(this)" onfocus="this.select()"></td>'
          + '</tr>';
     });
   });
   kutu.innerHTML = h + '</tbody></table>';
   tukFiltre(document.getElementById("tukAra").value);
+}
+
+// Sipariş miktarları (kod -> miktar), oturum boyunca saklanır
+const TUK_SIPARIS = (() => {
+  try { return JSON.parse(localStorage.getItem("gurok_tuk_siparis") || "{}"); } catch (e) { return {}; }
+})();
+function tukSipKaydet(inp) {
+  const k = inp.dataset.k, v = parseInt(inp.value) || 0;
+  if (v > 0) TUK_SIPARIS[k] = v; else delete TUK_SIPARIS[k];
+  try { localStorage.setItem("gurok_tuk_siparis", JSON.stringify(TUK_SIPARIS)); } catch (e) {}
+}
+
+// Seçili kategoriyi Excel olarak indir (tüketim + kalan + sipariş)
+function tukKategoriExcel() {
+  if (!TUKETIM || !TUK_AKTIF) return;
+  const kat = TUKETIM.kategoriler[TUK_AKTIF] || {};
+  const altSira = TUK_ALT_SIRA[TUK_AKTIF];
+  const bas = document.getElementById("tukBas").value, bit = document.getElementById("tukBit").value;
+
+  const aoa = [
+    [TUK_AKTIF + "  (" + bas + " — " + bit + ")"],
+    ["KOD", "ÜRÜN ADI", "BİRİM", "TÜKETİM", "KALAN STOK", "SİPARİŞ"]
+  ];
+  const bloklar = altSira ? altSira.filter(a => kat[a]).map(a => [a, kat[a]]) : Object.entries(kat);
+  bloklar.forEach(([alt, list]) => {
+    if (altSira) aoa.push(["— " + alt + " —"]);
+    list.slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")).forEach(u => {
+      aoa.push([u.kod, u.ad, u.birim, u.tuketim, u.kalan != null ? u.kalan : "", TUK_SIPARIS[u.kod] || ""]);
+    });
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{ wch: 13 }, { wch: 36 }, { wch: 7 }, { wch: 10 }, { wch: 11 }, { wch: 10 }];
+  const wb = XLSX.utils.book_new();
+  const sheetAd = TUK_AKTIF.replace(/[\\/?*:\[\]]/g, "").slice(0, 31);
+  XLSX.utils.book_append_sheet(wb, ws, sheetAd);
+  const dosyaAd = "siparis_" + TUK_AKTIF.replace(/[^a-zA-Z0-9]+/g, "_") + "_" + bas + ".xlsx";
+  XLSX.writeFile(wb, dosyaAd);
 }
 
 function tuketimSekmeGec(kat) { TUK_AKTIF = kat; cizTuketim(); }
