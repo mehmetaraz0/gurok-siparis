@@ -139,6 +139,37 @@ yükleyerek stoğu günceller:
 
 Liste: kod, ad, birim, stok, güncelleme; düşük (≤5) sarı, sıfır/negatif kırmızı; arama kutusu.
 
+### Mükerrer yükleme engeli
+
+Mal kabul **toplayarak** çalışır: aynı KUM dosyası ikinci kez yüklenirse gelen miktarlar
+ikiye katlanırdı ve hiçbir uyarı çıkmazdı (ağ koptuğunda "Uygula"ya tekrar basmak da aynı
+sonucu veriyordu). Artık her yükleme **içerik parmak iziyle** kaydedilir:
+
+`imza = sha256("kod:miktar;kod:miktar;…")` — kod sırasına dizilmiş kalem listesinin özeti.
+
+- Parmak izi **sunucuda** hesaplanır; istemciye güvenilmez, eski istemciler de korunur.
+- Dosya adı değişse, Excel'den PDF'e dönse, satır sırası değişse bile **aynı içerik yakalanır**.
+- Aynı imza ikinci kez gelirse **reddedilir** — hata mesajı ilk yüklemenin tarih/saatini söyler.
+- Gerçekten iki ayrı sevkiyat aynıysa: **"yine de uygula"** kutusu işaretlenip geçilebilir
+  (kayıtta `zorlandı` olarak işaretlenir).
+- İmza baseline/mal kabul ayrımı yapmaz — aynı dosyayı yanlış modda ikinci kez uygulamak da engellenir.
+
+Aynı kod dosyada birden çok kez geçerse (çok sayfalı Excel) tek satıra indirilir:
+baseline'da **en büyük** değer (anlık görüntü), mal kabulde **toplam** (iki ayrı giriş olabilir).
+Eskiden bu, `ON CONFLICT … cannot affect row a second time` ile tüm yüklemeyi düşürüyordu.
+
+### Yükleme geçmişi ve geri alma
+
+STOK sekmesinde son 30 yükleme listelenir: zaman, işlem, kalem sayısı, toplam, durum.
+Her kayıt uygulanan miktarları **ve yükleme öncesi stok değerlerini** sakladığı için geri alınabilir:
+
+- **Mal kabul geri alma** — eklenen miktarlar stoktan çıkarılır; aradaki **sipariş onaylarının
+  düşümleri korunur**.
+- **Baseline geri alma** — stok yükleme öncesi değerlere döner. ⚠ O yüklemeden sonra onaylanan
+  siparişlerin düşümleri de geri gelir; ekran bunu onay kutusunda söyler.
+- Yalnızca **en yeni** geri alınmamış yükleme geri alınabilir (🔒 ile kilitli gösterilir).
+  Araya yeni bir yükleme girdiyse eski kaydın "önceki değer"leri artık doğru değildir.
+
 Stoğu **0/negatif** olan ürün bar/mutfak listelerinde **görünmez**. Raporda hiç geçmeyen ürün
 "stok bilgisi yok" sayılır ve normal görünür (mutfak kalemleri kaybolmaz). Bar/mutfak stok
 sayısını görmez, yalnızca tükenen ürünü göremez.
@@ -184,6 +215,8 @@ Talepler listesi 15 saniyede bir kendini yeniler. Tarih seçiciyle geçmiş gün
 | `veri.js` | Bar ürün kataloğu (`D`), Excel şablonu (`TPL_B64`), satır şablonu (`ROW2`), grup renkleri (`GC`) — *otomatik üretildi* |
 | `stil.css` | Ortak stiller |
 | `config.js` | Supabase adresi ve anon key |
+| `admin.html` | Liste yönetimi — düzenlenebilir katalog, min sipariş / min stok, outlet PIN'leri |
+| `tuketim.js` | Tüketim raporu kategorilendirmesi (`TUK_KATEGORILER`, alt gruplar) — *haftalik-siparis-takip skill'inden porte* |
 | `kurulum.sql` | **Tek birleşik kurulum** — tüm tablolar, fonksiyonlar, güvenlik, PIN. İdempotent; mevcut DB'de de güvenle çalışır (veri/şifre/PIN korunur) |
 
 Excel üretimi `ortak.js` içinde tek `buildExcelBlob()` fonksiyonundadır. Eski tek dosyalık

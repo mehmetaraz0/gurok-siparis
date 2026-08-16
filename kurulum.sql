@@ -448,45 +448,211 @@ begin
   ), '[]'::jsonb);
 end $$;
 
+-- ================= STOK YÜKLEME KAYDI (mükerrer engel + geri alma) =================
+-- Mal kabul TOPLAYARAK çalışır; aynı KUM dosyası ikinci kez yüklenirse gelen
+-- miktarlar sessizce ikiye katlanıyordu (ağ koparınca "Uygula"ya tekrar basmak
+-- da aynı sonucu veriyordu). Artık her yükleme, İÇERİK PARMAK İZİYLE kaydedilir:
+-- imza = sha256("kod:miktar;kod:miktar;..." kod sırasında). Parmak izi SUNUCUDA
+-- hesaplanır — istemciye güvenilmez, eski istemciler de otomatik korunur.
+-- Aynı imza ikinci kez gelirse REDDEDİLİR; bilerek geçmek için p_zorla => true.
+--
+-- Her kayıt uygulanan miktarları VE yükleme öncesi stok değerlerini tutar:
+--   kalemler = [{k: kod, a: ad, b: birim, m: uygulanan, e: önceki stok (null = ürün yoktu)}]
+-- Böylece yanlış yükleme geri alınabilir (bkz. stok_yukleme_geri_al).
+
+create table if not exists public.stok_yukleme (
+  id              uuid primary key default gen_random_uuid(),
+  tarih           date not null default (now() at time zone 'Europe/Istanbul')::date,
+  mod             text not null,
+  imza            text not null,
+  kalem_sayisi    int  not null default 0,
+  toplam          numeric not null default 0,
+  kalemler        jsonb not null default '[]'::jsonb,
+  zorlandi        boolean not null default false,
+  geri_alindi     boolean not null default false,
+  geri_alma_saati timestamptz,
+  olusturma       timestamptz not null default now()
+);
+alter table public.stok_yukleme drop constraint if exists stok_yukleme_mod_chk;
+alter table public.stok_yukleme add constraint stok_yukleme_mod_chk check (mod in ('baseline','malkabul'));
+create index if not exists stok_yukleme_zaman_idx on public.stok_yukleme (olusturma desc);
+-- Bir imza aynı anda yalnızca bir GEÇERLİ yüklemede olabilir. Geri alınanlar ve
+-- bilerek zorlananlar dışarıda kalır (yarış durumuna karşı ikinci kemer).
+create unique index if not exists stok_yukleme_imza_idx
+  on public.stok_yukleme (imza) where (not geri_alindi and not zorlandi);
+
+alter table public.stok_yukleme enable row level security;
+revoke all on public.stok_yukleme from anon, authenticated;
+
+
 -- STOK yükleme / listeleme / temizleme
-create or replace function public.stok_baseline(p_sifre text, p_kalemler jsonb)
+-- Eski iki parametreli sürümler kaldırılır; yeni sürümde p_zorla VARSAYILANLI,
+-- yani {p_sifre, p_kalemler} ile çağıran eski istemci de çalışmaya devam eder.
+drop function if exists public.stok_baseline(text, jsonb);
+drop function if exists public.stok_malkabul(text, jsonb);
+
+create or replace function public.stok_baseline(p_sifre text, p_kalemler jsonb, p_zorla boolean default false)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_adet int;
+declare
+  v_kalemler jsonb; v_imza text; v_adet int; v_toplam numeric;
+  v_eski timestamptz; v_eskimod text; v_mukerrer boolean := false;
 begin
   if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
   if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
-  with veri as (
+
+  -- Dosyada aynı kod birden çok kez geçebilir (çok sayfalı Excel). Baseline bir
+  -- ANLIK GÖRÜNTÜ olduğu için tek kayda indirilir (en büyük değer alınır).
+  -- Eskiden bu, "ON CONFLICT ... cannot affect row a second time" ile patlıyordu.
+  with ham as (
     select el->>'k' kod, left(el->>'a',120) ad, left(coalesce(el->>'b','ad'),20) birim,
            (el->>'m')::numeric miktar
       from jsonb_array_elements(p_kalemler) el
      where el->>'k' ~ '^[A-Z]{3}[0-9]{8}$' and (el->>'m') ~ '^-?[0-9]+(\.[0-9]+)?$'),
-  yaz as (
-    insert into stok (kod, ad, birim, miktar, guncelleme)
-    select kod, ad, birim, miktar, now() from veri
-    on conflict (kod) do update set miktar=excluded.miktar, ad=excluded.ad,
-      birim=excluded.birim, guncelleme=now() returning 1)
-  select count(*) into v_adet from yaz;
-  return jsonb_build_object('ok', true, 'adet', v_adet);
+  veri as (select kod, max(ad) ad, max(birim) birim, max(miktar) miktar from ham group by kod)
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'k', v.kod, 'a', v.ad, 'b', v.birim, 'm', v.miktar, 'e', s.miktar) order by v.kod), '[]'::jsonb)
+    into v_kalemler
+    from veri v left join stok s on s.kod = v.kod;
+
+  v_adet := jsonb_array_length(v_kalemler);
+  if v_adet = 0 then raise exception 'Uygulanabilir kalem yok'; end if;
+
+  select encode(extensions.digest(
+           string_agg((el->>'k') || ':' || (el->>'m'), ';' order by el->>'k'), 'sha256'), 'hex'),
+         coalesce(sum((el->>'m')::numeric), 0)
+    into v_imza, v_toplam
+    from jsonb_array_elements(v_kalemler) el;
+
+  select olusturma, mod into v_eski, v_eskimod
+    from stok_yukleme where imza = v_imza and not geri_alindi
+   order by olusturma desc limit 1;
+  if found then
+    v_mukerrer := true;
+    if not coalesce(p_zorla, false) then
+      raise exception 'Bu dosya zaten yuklendi: % (%). Yine de uygulamak icin "yine de uygula" isaretleyin.',
+        to_char(v_eski at time zone 'Europe/Istanbul', 'DD.MM.YYYY HH24:MI'), v_eskimod;
+    end if;
+  end if;
+
+  insert into stok (kod, ad, birim, miktar, guncelleme)
+  select el->>'k', el->>'a', el->>'b', (el->>'m')::numeric, now()
+    from jsonb_array_elements(v_kalemler) el
+  on conflict (kod) do update set miktar=excluded.miktar, ad=excluded.ad,
+    birim=excluded.birim, guncelleme=now();
+
+  insert into stok_yukleme (mod, imza, kalem_sayisi, toplam, kalemler, zorlandi)
+  values ('baseline', v_imza, v_adet, v_toplam, v_kalemler, v_mukerrer);
+
+  return jsonb_build_object('ok', true, 'adet', v_adet, 'toplam', v_toplam, 'zorlandi', v_mukerrer);
 end $$;
 
-create or replace function public.stok_malkabul(p_sifre text, p_kalemler jsonb)
+create or replace function public.stok_malkabul(p_sifre text, p_kalemler jsonb, p_zorla boolean default false)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_adet int;
+declare
+  v_kalemler jsonb; v_imza text; v_adet int; v_toplam numeric;
+  v_eski timestamptz; v_eskimod text; v_mukerrer boolean := false;
 begin
   if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
   if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
-  with veri as (
+
+  -- Mal kabulde aynı kod birden çok satırda gelebilir → TOPLANIR (gerçekten iki
+  -- kalem girişi olabilir). Tek satıra indirmek ON CONFLICT çakışmasını da önler.
+  with ham as (
     select el->>'k' kod, left(el->>'a',120) ad, left(coalesce(el->>'b','ad'),20) birim,
            (el->>'m')::numeric miktar
       from jsonb_array_elements(p_kalemler) el
      where el->>'k' ~ '^[A-Z]{3}[0-9]{8}$' and (el->>'m') ~ '^[0-9]+(\.[0-9]+)?$'
        and (el->>'m')::numeric > 0),
-  yaz as (
-    insert into stok (kod, ad, birim, miktar, guncelleme)
-    select kod, ad, birim, miktar, now() from veri
-    on conflict (kod) do update set miktar=stok.miktar+excluded.miktar, guncelleme=now() returning 1)
-  select count(*) into v_adet from yaz;
-  return jsonb_build_object('ok', true, 'adet', v_adet);
+  veri as (select kod, max(ad) ad, max(birim) birim, sum(miktar) miktar from ham group by kod)
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'k', v.kod, 'a', v.ad, 'b', v.birim, 'm', v.miktar, 'e', s.miktar) order by v.kod), '[]'::jsonb)
+    into v_kalemler
+    from veri v left join stok s on s.kod = v.kod;
+
+  v_adet := jsonb_array_length(v_kalemler);
+  if v_adet = 0 then raise exception 'Uygulanabilir kalem yok (gelen miktari 0 olan dosya)'; end if;
+
+  select encode(extensions.digest(
+           string_agg((el->>'k') || ':' || (el->>'m'), ';' order by el->>'k'), 'sha256'), 'hex'),
+         coalesce(sum((el->>'m')::numeric), 0)
+    into v_imza, v_toplam
+    from jsonb_array_elements(v_kalemler) el;
+
+  select olusturma, mod into v_eski, v_eskimod
+    from stok_yukleme where imza = v_imza and not geri_alindi
+   order by olusturma desc limit 1;
+  if found then
+    v_mukerrer := true;
+    if not coalesce(p_zorla, false) then
+      raise exception 'Bu dosya zaten yuklendi: % (%). Yine de uygulamak icin "yine de uygula" isaretleyin.',
+        to_char(v_eski at time zone 'Europe/Istanbul', 'DD.MM.YYYY HH24:MI'), v_eskimod;
+    end if;
+  end if;
+
+  insert into stok (kod, ad, birim, miktar, guncelleme)
+  select el->>'k', el->>'a', el->>'b', (el->>'m')::numeric, now()
+    from jsonb_array_elements(v_kalemler) el
+  on conflict (kod) do update set miktar=stok.miktar+excluded.miktar, guncelleme=now();
+
+  insert into stok_yukleme (mod, imza, kalem_sayisi, toplam, kalemler, zorlandi)
+  values ('malkabul', v_imza, v_adet, v_toplam, v_kalemler, v_mukerrer);
+
+  return jsonb_build_object('ok', true, 'adet', v_adet, 'toplam', v_toplam, 'zorlandi', v_mukerrer);
+end $$;
+
+-- Son yüklemeler (kalemler dönmez — liste hafif kalsın)
+create or replace function public.stok_yukleme_liste(p_sifre text, p_adet int default 30)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'id', t.id, 'tarih', t.tarih, 'mod', t.mod, 'kalem_sayisi', t.kalem_sayisi,
+             'toplam', t.toplam, 'zorlandi', t.zorlandi, 'geri_alindi', t.geri_alindi,
+             'geri_alma_saati', t.geri_alma_saati, 'olusturma', t.olusturma,
+             'imza', left(t.imza, 10)) order by t.olusturma desc)
+      from (select * from stok_yukleme order by olusturma desc
+             limit least(coalesce(p_adet, 30), 200)) t), '[]'::jsonb);
+end $$;
+
+-- Bir yüklemeyi geri al.
+--  • mal kabul → eklenen miktar geri ÇIKARILIR (aradaki sipariş onayları korunur)
+--  • baseline  → yükleme ÖNCESİ değerlere dönülür (o yüklemeden sonraki
+--                onay düşümleri de geri gelir; bu yüzden istemci uyarı gösterir)
+-- Yalnızca EN YENİ geçerli yükleme geri alınabilir: daha yeni bir yükleme
+-- araya girmişse eski kaydın "önceki değer"leri artık doğru değildir.
+create or replace function public.stok_yukleme_geri_al(p_sifre text, p_id uuid)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_mod text; v_kalemler jsonb; v_zaman timestamptz; v_geri boolean; v_adet int;
+begin
+  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  select mod, kalemler, olusturma, geri_alindi
+    into v_mod, v_kalemler, v_zaman, v_geri
+    from stok_yukleme where id = p_id;
+  if not found then raise exception 'Yukleme kaydi bulunamadi'; end if;
+  if v_geri then raise exception 'Bu yukleme zaten geri alindi'; end if;
+  if exists (select 1 from stok_yukleme
+              where olusturma > v_zaman and not geri_alindi) then
+    raise exception 'Once bundan sonraki yuklemeleri geri alin (en yeniden eskiye dogru)';
+  end if;
+
+  if v_mod = 'malkabul' then
+    update stok s set miktar = s.miktar - (el->>'m')::numeric, guncelleme = now()
+      from jsonb_array_elements(v_kalemler) el
+     where s.kod = el->>'k';
+  else
+    update stok s set miktar = (el->>'e')::numeric, guncelleme = now()
+      from jsonb_array_elements(v_kalemler) el
+     where s.kod = el->>'k' and (el->>'e') is not null;
+  end if;
+
+  -- Bu yüklemeyle İLK KEZ oluşmuş kayıtlar tamamen silinir
+  delete from stok where kod in (
+    select el->>'k' from jsonb_array_elements(v_kalemler) el where (el->>'e') is null);
+
+  update stok_yukleme set geri_alindi = true, geri_alma_saati = now() where id = p_id;
+  v_adet := jsonb_array_length(v_kalemler);
+  return jsonb_build_object('ok', true, 'adet', v_adet, 'mod', v_mod);
 end $$;
 
 create or replace function public.stok_liste(p_sifre text)
@@ -679,8 +845,10 @@ grant execute on function public.depo_envanter(text, date, date)                
 grant execute on function public.depo_kalem_guncelle(text, text, text, int)           to anon;
 grant execute on function public.depo_durum_degistir(text, text, text)                to anon;
 grant execute on function public.onay_stok_kontrol(text, text)                        to anon;
-grant execute on function public.stok_baseline(text, jsonb)                           to anon;
-grant execute on function public.stok_malkabul(text, jsonb)                           to anon;
+grant execute on function public.stok_baseline(text, jsonb, boolean)                  to anon;
+grant execute on function public.stok_malkabul(text, jsonb, boolean)                  to anon;
+grant execute on function public.stok_yukleme_liste(text, int)                        to anon;
+grant execute on function public.stok_yukleme_geri_al(text, uuid)                     to anon;
 grant execute on function public.stok_liste(text)                                     to anon;
 grant execute on function public.stok_katalog_disi_sil(text, jsonb)                   to anon;
 grant execute on function public.stok_temizle(text)                                   to anon;

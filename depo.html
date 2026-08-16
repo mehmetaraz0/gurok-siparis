@@ -81,13 +81,17 @@
         <div class="stok-yukle">
           <b>KUM raporu yükle</b>
           <div class="stok-mod">
-            <label><input type="radio" name="stokMod" value="baseline" checked>
+            <label><input type="radio" name="stokMod" value="baseline" checked onchange="stokModDegisti()">
               <span>Baseline — stoğu <b>Kalan</b>'a eşitle</span></label>
-            <label><input type="radio" name="stokMod" value="malkabul">
+            <label><input type="radio" name="stokMod" value="malkabul" onchange="stokModDegisti()">
               <span>Mal kabul — <b>gelen</b>i stoğa ekle</span></label>
           </div>
           <input type="file" id="stokDosya" accept=".xlsx,.xls,.csv,.pdf" onchange="stokDosyaSecildi()">
           <div class="stok-onizle" id="stokOnizle"></div>
+          <label class="stok-zorla" id="stokZorlaKutu" style="display:none">
+            <input type="checkbox" id="stokZorla">
+            <span>Bu içerik daha önce yüklendi — <b>yine de uygula</b> (stok yeniden değişecek)</span>
+          </label>
           <button class="db" id="stokUygulaBtn" disabled onclick="stokUygula()">Uygula</button>
         </div>
         <div class="stok-sag">
@@ -98,6 +102,12 @@
       </div>
 
       <div class="depo-header">
+        <span>YÜKLEME GEÇMİŞİ — aynı içerik ikinci kez uygulanamaz</span>
+        <span class="depo-count" id="yuklemeCount">—</span>
+      </div>
+      <div id="yuklemeIcerik"><div class="em">Yükleniyor...</div></div>
+
+      <div class="depo-header" style="margin-top:14px">
         <span>GÜNCEL STOK</span>
         <span class="depo-count" id="stokCount">—</span>
       </div>
@@ -266,7 +276,7 @@ function sekmeGec(hangi) {
 
   if (hangi === "env"  && !ENVANTER) envanterGetir();
   if (hangi === "tuk"  && !TUKETIM)  tuketimGetir();
-  if (hangi === "stok" && !STOK)     stokGetir();
+  if (hangi === "stok" && !STOK)   { stokGetir(); yuklemeGetir(); }
 }
 
 // Hangi barın gönderdiği zaten talep listesinde görünüyor; burada sadece
@@ -975,6 +985,7 @@ async function stokDosyaSecildi() {
   const btn = document.getElementById("stokUygulaBtn");
   stokParsed = null;
   btn.disabled = true;
+  stokZorlaGizle();      // yeni dosya = yeni karar; eski "yine de uygula" onayı taşınmaz
   if (!f) { onizle.textContent = ""; return; }
 
   onizle.textContent = "⏳ Okunuyor: " + f.name;
@@ -1062,10 +1073,17 @@ async function stokPdfOku(file) {
   return aXsatir.length >= aYsatir.length ? aXsatir : aYsatir;
 }
 
+// Mod değişince önizleme eski moda göre kalmasın (baseline "→ kalan",
+// mal kabul "+ gelen" gösterir; yanlış moda bakıp Uygula'ya basılmasın).
+function stokModDegisti() {
+  if (document.getElementById("stokDosya").files.length) stokDosyaSecildi();
+}
+
 async function stokUygula() {
   if (!stokParsed || !stokParsed.length) return;
   const mod = document.querySelector('input[name=stokMod]:checked').value;
   const btn = document.getElementById("stokUygulaBtn");
+  const zorla = document.getElementById("stokZorla").checked;
 
   // Sunucuya {k, a, b, m} gönderilir. Baseline'da m=kalan, mal kabulde m=gelen.
   const kalemler = stokParsed.map(k => ({
@@ -1076,23 +1094,145 @@ async function stokUygula() {
       !confirm("BASELINE: " + kalemler.length + " kalemin stoğu rapordaki Kalan'a EŞİTLENECEK.\n\n"
              + "Bu, mevcut stok sayılarının üzerine yazar. Devam edilsin mi?")) return;
 
+  if (zorla && !confirm("⚠ Bu içerik daha önce uygulandı.\n\n"
+      + (mod === "malkabul"
+          ? "Yine de uygularsanız gelen miktarlar stoğa BİR KEZ DAHA eklenir.\n"
+          : "Yine de uygularsanız stok bu rapordaki değerlere yeniden eşitlenir.\n")
+      + "\nGerçekten iki ayrı işlem mi? Devam edilsin mi?")) return;
+
   btn.disabled = true;
   btn.textContent = "⏳ Uygulanıyor...";
   try {
     const fn = mod === "baseline" ? "stok_baseline" : "stok_malkabul";
-    const { data, error } = await SB.rpc(fn, { p_sifre: SIFRE, p_kalemler: kalemler });
+    // p_zorla YALNIZCA gerektiğinde gönderilir: böylece kurulum.sql henüz
+    // çalıştırılmamış eski veritabanında da eski imza ({p_sifre,p_kalemler}) çalışır.
+    const args = { p_sifre: SIFRE, p_kalemler: kalemler };
+    if (zorla) args.p_zorla = true;
+
+    const { data, error } = await SB.rpc(fn, args);
     if (error) throw error;
+
     btn.textContent = "✅ " + (data.adet ?? "") + " kalem işlendi";
     document.getElementById("stokDosya").value = "";
     document.getElementById("stokOnizle").textContent = "";
+    stokZorlaGizle();
     stokParsed = null;
     await stokGetir();
+    await yuklemeGetir();
     setTimeout(() => { btn.textContent = "Uygula"; }, 2500);
   } catch (e) {
     console.error(e);
+    const m = e.message || "";
+    // Mükerrer yükleme: hata değil, kasıtlı engel. "Yine de uygula" kutusunu aç.
+    if (/zaten yuklendi/i.test(m)) {
+      document.getElementById("stokZorlaKutu").style.display = "";
+      document.getElementById("stokOnizle").innerHTML =
+        '<span class="hata">⛔ ' + htmlEsc(m) + '</span>';
+      btn.textContent = "Uygula";
+      btn.disabled = false;
+      await yuklemeGetir();
+      return;
+    }
     btn.textContent = "❌ Hata";
-    alert("Uygulanamadı: " + (e.message || "bağlantı hatası"));
+    alert("Uygulanamadı: " + (m || "bağlantı hatası"));
     setTimeout(() => { btn.textContent = "Uygula"; btn.disabled = false; }, 2500);
+  }
+}
+
+function stokZorlaGizle() {
+  document.getElementById("stokZorlaKutu").style.display = "none";
+  document.getElementById("stokZorla").checked = false;
+}
+
+/* ---- Yükleme geçmişi + geri alma ---- */
+
+let YUKLEMELER = [];
+
+async function yuklemeGetir() {
+  const kutu = document.getElementById("yuklemeIcerik");
+  try {
+    const { data, error } = await SB.rpc("stok_yukleme_liste", { p_sifre: SIFRE, p_adet: 30 });
+    if (error) throw error;
+    YUKLEMELER = data || [];
+    cizYukleme();
+  } catch (e) {
+    console.error(e);
+    YUKLEMELER = [];
+    document.getElementById("yuklemeCount").textContent = "—";
+    kutu.innerHTML = '<div class="em">Yükleme geçmişi okunamadı.'
+      + '<br><small>Güncel <b>kurulum.sql</b> Supabase\'de çalıştırıldı mı?</small></div>';
+  }
+}
+
+function cizYukleme() {
+  const kutu = document.getElementById("yuklemeIcerik");
+  document.getElementById("yuklemeCount").textContent = YUKLEMELER.length + " yükleme";
+
+  if (!YUKLEMELER.length) {
+    kutu.innerHTML = '<div class="em">Henüz stok yüklemesi yapılmadı.</div>';
+    return;
+  }
+
+  // Yalnızca EN YENİ geri alınmamış yükleme geri alınabilir: daha yeni bir
+  // yükleme araya girdiyse eski kaydın "önceki değer"leri artık geçerli değil.
+  const geriAlinabilir = YUKLEMELER.find(y => !y.geri_alindi);
+
+  let h = '<table class="stok-tbl"><thead><tr>'
+        + '<th>ZAMAN</th><th>İŞLEM</th><th>KALEM</th><th>TOPLAM</th><th>DURUM</th><th></th>'
+        + '</tr></thead><tbody>';
+
+  YUKLEMELER.forEach(y => {
+    const bu = geriAlinabilir && y.id === geriAlinabilir.id;
+    const toplam = Number(y.toplam);
+    h += '<tr' + (y.geri_alindi ? ' class="yuk-geri"' : '') + '>'
+       + '<td style="white-space:nowrap;font-size:11px">' + tarihSaat(y.olusturma) + '</td>'
+       + '<td>' + (y.mod === "baseline"
+            ? '<span class="rz talep">BASELINE</span>'
+            : '<span class="rz onay">MAL KABUL</span>')
+         + (y.zorlandi ? ' <i class="uyari">zorlandı</i>' : '') + '</td>'
+       + '<td class="say">' + y.kalem_sayisi + '</td>'
+       + '<td class="say">' + (Number.isInteger(toplam) ? toplam : toplam.toFixed(2)) + '</td>'
+       + '<td style="font-size:11px">' + (y.geri_alindi
+            ? '↩ geri alındı ' + (y.geri_alma_saati ? tarihSaat(y.geri_alma_saati) : "")
+            : '✔ uygulandı') + '</td>'
+       + '<td class="say">' + (bu
+            ? '<button class="cb yuk-geri-btn" data-id="' + htmlEsc(y.id) + '">↩ Geri al</button>'
+            : (y.geri_alindi ? '' : '<span class="yuk-kilit" title="Önce bundan sonraki '
+                + 'yüklemeleri geri alın (en yeniden eskiye doğru)">🔒</span>')) + '</td>'
+       + '</tr>';
+  });
+
+  kutu.innerHTML = h + '</tbody></table>';
+}
+
+// Geri al düğmesi — id inline onclick'e GÖMÜLMEZ, data-id + delegasyon.
+document.getElementById("yuklemeIcerik").addEventListener("click", e => {
+  const btn = e.target.closest(".yuk-geri-btn");
+  if (btn && btn.dataset.id) yuklemeGeriAl(btn.dataset.id);
+});
+
+async function yuklemeGeriAl(id) {
+  const y = YUKLEMELER.find(x => x.id === id);
+  if (!y) return;
+
+  const uyari = y.mod === "malkabul"
+    ? "Bu yüklemede eklenen miktarlar stoktan geri ÇIKARILACAK.\n"
+      + "Aradaki sipariş onaylarının düşümleri korunur."
+    : "Stok, bu yükleme ÖNCESİNDEKİ değerlere döndürülecek.\n"
+      + "⚠ Bu yüklemeden sonra onaylanan siparişlerin stok düşümleri de geri gelir.";
+
+  if (!confirm(tarihSaat(y.olusturma) + " — " + (y.mod === "baseline" ? "BASELINE" : "MAL KABUL")
+      + " (" + y.kalem_sayisi + " kalem)\n\n" + uyari + "\n\nGeri alınsın mı?")) return;
+
+  try {
+    const { data, error } = await SB.rpc("stok_yukleme_geri_al", { p_sifre: SIFRE, p_id: id });
+    if (error) throw error;
+    alert((data.adet ?? 0) + " kalem geri alındı.");
+    await stokGetir();
+    await yuklemeGetir();
+  } catch (e) {
+    console.error(e);
+    alert("Geri alınamadı: " + (e.message || "bağlantı hatası"));
   }
 }
 </script>
