@@ -56,6 +56,13 @@
         <span class="env-hazir" id="tukHazir"></span>
         <input class="sb env-ara" id="tukAra" placeholder="Ürün ara..." oninput="tukFiltre(this.value)">
       </div>
+      <div class="env-arac" id="cikisArac" style="display:none">
+        <label>Outlet çıkış Excel
+          <select id="cikisOutlet" class="sb" style="min-width:200px"></select>
+        </label>
+        <button class="db" onclick="outletCikisExcel()">⬇ Çıkış Excel (LN)</button>
+        <span class="env-hazir">seçili outlet'in bu aralıktaki tüm çıkışı — LN formatında tek dosya</span>
+      </div>
       <div class="tuk-sekmeler" id="tukSekmeler"></div>
       <div id="tukIcerik"><div class="em">Tarih aralığı seçip <b>Getir</b>'e basın — onaylanan siparişlerden tüketim kategorilere ayrılır.</div></div>
     </div>
@@ -137,6 +144,7 @@
 <script src="veri.js"></script>
 <script src="mutfak.js"></script>
 <script src="tuketim.js"></script>
+<script src="mutabakat.js"></script>
 <script src="config.js"></script>
 <script src="ortak.js"></script>
 <script>
@@ -153,6 +161,7 @@ let ACIK_NO = null;             // detayı açık siparişin numarası (null ise
 let STOK = null;                // stok listesi (null = henüz çekilmedi)
 let stokParsed = null;          // yüklenen dosyadan ayrıştırılan kalemler
 let TUKETIM = null;             // tüketim raporu verisi (null = henüz çekilmedi)
+let TUK_ORDERS = [];            // tüketim aralığındaki ham siparişler (outlet çıkış Excel'i)
 let TUK_AKTIF = null;           // seçili tüketim kategorisi
 let ENVANTER = null;            // envanter aralığının siparişleri (null = henüz çekilmedi)
 let ACIK_URUN = null;           // hareket detayı açık ürün kodu (null ise liste ekranı)
@@ -767,6 +776,8 @@ async function tuketimGetir() {
     });
 
     TUKETIM = { kategoriler };
+    TUK_ORDERS = orders;                 // outlet çıkış Excel'i ham siparişleri kullanır
+    cikisOutletDoldur(orders);
     document.getElementById("tukHazir").textContent =
       onayli + " onaylı sipariş · " + tuketilen + " ürün tüketildi";
     TUK_AKTIF = TUK_KATEGORILER.find(t => kategoriler[t]) || null;
@@ -881,6 +892,45 @@ function tukKategoriExcel() {
 }
 
 function tuketimSekmeGec(kat) { TUK_AKTIF = kat; cizTuketim(); }
+
+// Outlet çıkış Excel'i: aralıktaki ham siparişlerden benzersiz outlet'leri listeler.
+function cikisOutletDoldur(orders) {
+  const arac = document.getElementById("cikisArac");
+  const sel = document.getElementById("cikisOutlet");
+  const map = {};
+  (orders || []).forEach(s => { if (s.durum === "onaylandi" && !map[s.outlet_kod]) map[s.outlet_kod] = s.outlet_ad; });
+  const kodlar = Object.keys(map).sort();
+  if (!kodlar.length) { arac.style.display = "none"; sel.innerHTML = ""; return; }
+  const onceki = sel.value;
+  sel.innerHTML = kodlar.map(k =>
+    '<option value="' + htmlEsc(k) + '">' + htmlEsc(kisaKod(k)) + ' — ' + htmlEsc(map[k]) + '</option>').join("");
+  if (onceki && map[onceki]) sel.value = onceki;
+  arac.style.display = "";
+}
+
+// Seçili outlet'in bu tarih aralığındaki TÜM onaylı çıkışını, mevcut onay Excel'iyle
+// birebir aynı formatta (buildExcelBlob) tek dosyada üretir. LN'e stok düşümü için.
+async function outletCikisExcel() {
+  const sel = document.getElementById("cikisOutlet");
+  const kod = sel.value;
+  if (!kod) { alert("Önce tarih aralığı seçip Getir'e basın, sonra outlet seçin."); return; }
+  const kalemler = haftalikCikisTopla(TUK_ORDERS, kod);
+  if (!kalemler.length) { alert("Bu outlet'in bu aralıkta onaylı çıkışı yok."); return; }
+  const ad = (TUK_ORDERS.find(s => s.outlet_kod === kod) || {}).outlet_ad || kod;
+  try {
+    const blob = await buildExcelBlob(kod, ad, kalemler);
+    const bas = document.getElementById("tukBas").value, bit = document.getElementById("tukBit").value;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "cikis_" + kod + "_" + bas + "_" + bit + ".xlsx";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error(e);
+    alert("Excel üretilemedi: " + (e.message || "hata"));
+  }
+}
 
 function tukFiltre(t) {
   t = (t || "").toLowerCase().trim();
