@@ -45,8 +45,8 @@
     <p style="font-size:12px;color:#777;margin:8px 0">Kaptanlar bara bağlı değildir; kendi PIN'leriyle girip sipariş vereceği barı seçer. Depoda o siparişte <b>gönderen</b> olarak kaptanın adı görünür.</p>
     <div class="ekle-kutu">
       <b>Kaptan ekle</b>
-      <input id="kKod" placeholder="Kod (K01)" maxlength="10">
-      <input id="kAd" placeholder="Ad Soyad">
+      <input id="kAd" placeholder="Ad Soyad" oninput="kaptanKodGuncelle()">
+      <input id="kKod" placeholder="kullanıcı adı (otomatik)" maxlength="10" oninput="this.dataset.elle='1'" style="text-transform:lowercase">
       <input id="kPin" placeholder="PIN (3-12 hane)" maxlength="12" inputmode="numeric">
       <button class="gb" onclick="kaptanEkle()">+ Ekle</button>
     </div>
@@ -360,6 +360,36 @@ function pinYonetimiKapat() {
 }
 
 /* ---- Kaptan yönetimi ---- */
+let KAPTAN_KODLAR = new Set();   // mevcut kaptan kodları (çakışma önleme)
+
+// Türkçe sadeleştir: küçük harf, tr karakter -> ascii, harf/rakam dışını at
+function trSade(s) {
+  return String(s || "").toLocaleLowerCase("tr")
+    .replace(/ç/g, "c").replace(/ğ/g, "g").replace(/ı/g, "i").replace(/i̇/g, "i")
+    .replace(/ö/g, "o").replace(/ş/g, "s").replace(/ü/g, "u")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+// Ad Soyad -> kullanıcı adı: ad baş harfi + soyad (Mehmet Turan Araz -> maraz).
+// Aynı kod varsa sonuna sayı ekle (maraz, maraz2, ...).
+function kaptanKodOner(ad) {
+  const parca = String(ad || "").trim().split(/\s+/).filter(Boolean);
+  let taban = parca.length >= 2
+    ? trSade(parca[0][0]) + trSade(parca[parca.length - 1])
+    : trSade(parca[0] || "");
+  taban = taban.slice(0, 10);
+  if (!taban) return "";
+  let kod = taban, n = 2;
+  while (KAPTAN_KODLAR.has(kod)) { kod = (taban.slice(0, 9) + n).slice(0, 10); n++; }
+  return kod;
+}
+
+function kaptanKodGuncelle() {
+  const kKod = document.getElementById("kKod");
+  if (kKod.dataset.elle === "1") return;   // elle yazıldıysa dokunma
+  kKod.value = kaptanKodOner(document.getElementById("kAd").value);
+}
+
 async function kaptanPaneliAc() {
   if (!SIFRE) { alert("Önce giriş yapın."); return; }
   document.getElementById("listePanel").style.display = "none";
@@ -378,6 +408,7 @@ async function kaptanListele() {
     const { data, error } = await SB.rpc("kaptan_liste", { p_sifre: SIFRE });
     if (error) throw error;
     const list = data || [];
+    KAPTAN_KODLAR = new Set(list.map(k => k.kod));   // öneri çakışma kontrolü için
     document.getElementById("kaptanCount").textContent = list.length + " kaptan";
     kutu.innerHTML = list.length
       ? '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th></th></tr></thead><tbody>' +
@@ -395,8 +426,9 @@ async function kaptanEkle() {
   try {
     const { error } = await SB.rpc("kaptan_ekle", { p_sifre: SIFRE, p_kod: kod, p_ad: ad, p_pin: pin });
     if (error) throw error;
-    document.getElementById("kKod").value = "";
     document.getElementById("kAd").value = "";
+    document.getElementById("kKod").value = "";
+    document.getElementById("kKod").dataset.elle = "";   // sonraki kaptan yine otomatik önerilsin
     document.getElementById("kPin").value = "";
     await kaptanListele();
   } catch (e) { alert("Eklenemedi: " + (e.message || "hata")); }
