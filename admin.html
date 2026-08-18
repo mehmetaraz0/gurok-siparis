@@ -46,7 +46,7 @@
     <div class="ekle-kutu">
       <b>Kaptan ekle</b>
       <input id="kAd" placeholder="Ad Soyad" oninput="kaptanKodGuncelle()">
-      <input id="kKod" placeholder="kullanıcı adı (otomatik)" maxlength="10" oninput="this.dataset.elle='1'" style="text-transform:lowercase">
+      <input id="kKod" placeholder="kullanıcı adı (otomatik)" maxlength="10" oninput="this.dataset.elle='1'" autocapitalize="off">
       <input id="kPin" placeholder="PIN (3-12 hane)" maxlength="12" inputmode="numeric">
       <button class="gb" onclick="kaptanEkle()">+ Ekle</button>
     </div>

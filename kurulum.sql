@@ -863,15 +863,16 @@ returns jsonb language sql security definer set search_path = public as $$
     from kaptan where aktif;
 $$;
 
--- Kaptan girişi: kod + PIN doğrula
+-- Kaptan girişi: kod (BÜYÜK/küçük harf fark etmez) + PIN doğrula
 create or replace function public.kaptan_giris(p_kod text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_ad text;
+declare v_ad text; v_kod text;
 begin
-  select ad into v_ad from kaptan
-   where kod = p_kod and aktif and pin = extensions.crypt(coalesce(p_pin,''), pin);
+  select kod, ad into v_kod, v_ad from kaptan
+   where lower(kod) = lower(coalesce(p_kod,'')) and aktif
+     and pin = extensions.crypt(coalesce(p_pin,''), pin);
   if v_ad is null then raise exception 'Kaptan kodu veya PIN hatali'; end if;
-  return jsonb_build_object('ok', true, 'kod', p_kod, 'ad', v_ad);
+  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_ad);
 end $$;
 
 -- Admin: kaptan listesi (PIN yok)
@@ -891,8 +892,9 @@ begin
   if coalesce(p_kod,'') !~ '^[A-Za-z0-9]{1,10}$' then raise exception 'Kod 1-10 harf/rakam olmali'; end if;
   if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
   if coalesce(p_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
+  -- kod küçük harfe normalize edilir (giriş kasadan bağımsız çalışsın)
   insert into kaptan (kod, ad, pin, aktif)
-  values (p_kod, left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf')), true)
+  values (lower(p_kod), left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf')), true)
   on conflict (kod) do update set ad = excluded.ad, pin = excluded.pin, aktif = true;
   return jsonb_build_object('ok', true);
 end $$;
@@ -902,7 +904,7 @@ create or replace function public.kaptan_sil(p_sifre text, p_kod text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
-  delete from kaptan where kod = p_kod;
+  delete from kaptan where lower(kod) = lower(coalesce(p_kod,''));
   return jsonb_build_object('ok', true);
 end $$;
 
