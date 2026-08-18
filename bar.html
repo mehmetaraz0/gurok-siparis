@@ -9,14 +9,30 @@
 </head>
 <body>
 
-<!-- ===== Kod giriş ekranı ===== -->
+<!-- ===== Giriş ekranı ===== -->
 <div class="kilit" id="kilit">
   <h2>SİPARİŞ GİRİŞİ</h2>
-  <p>Birim kodunuzu girin</p>
+  <div id="kaptanGirisKutu">
+    <p>Kaptan girişi (bar)</p>
+    <select id="kaptanSec" class="sb"><option value="">Kaptan seçin…</option></select>
+    <input type="password" id="kaptanPin" placeholder="PIN" autocomplete="off" maxlength="12" inputmode="numeric">
+    <button id="kaptanBtn" onclick="kaptanGiris()">Devam</button>
+    <div class="err" id="kaptanHata"></div>
+  </div>
+  <hr style="margin:18px 0;opacity:.25">
+  <p>Mutfak birim kodu</p>
   <input type="text" id="kod" placeholder="Kod" autocomplete="off" maxlength="6">
   <input type="password" id="pin" placeholder="PIN" autocomplete="off" maxlength="12" inputmode="numeric" style="display:none">
   <button id="girisBtn" onclick="girisYap()">Devam</button>
   <div class="err" id="kodHata"></div>
+</div>
+
+<!-- ===== Bar seçim ekranı (kaptan girişi sonrası) ===== -->
+<div class="kilit" id="barEkran" style="display:none">
+  <h2>BAR SEÇ</h2>
+  <p id="kaptanAdEt">—</p>
+  <div id="barButonlar"></div>
+  <button class="cb" style="margin-top:14px" onclick="kaptanaCik()">← Kaptan çıkışı</button>
 </div>
 
 <!-- ===== Bölüm seçim ekranı (çok bölümlü mutfaklar) ===== -->
@@ -73,6 +89,7 @@ let kirli = false;   // gönderilmemiş değişiklik var mı
 let siparisId = null; // idempotency: bu sipariş denemesinin istemci kimliği
 let GIZLI = new Set(); // stoğu 0/negatif → listede gizlenecek kodlar
 let PIN = null;        // outlet PIN'i (varsa) — her siparişte gönderilir
+let KAPTAN = null;     // {kod, ad, pin} — bar girişi kaptan kimliği (mutfakta null)
 
 // Bir gönderim denemesi için benzersiz kimlik. Ağ koparsa aynı kimlikle tekrar
 // gönderilir; sunucu ikinci siparişi açmaz, ilkini döndürür.
@@ -111,6 +128,64 @@ const kodInput = document.getElementById("kod");
 const pinInput = document.getElementById("pin");
 kodInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
 pinInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
+document.getElementById("kaptanPin").addEventListener("keydown", e => { if (e.key === "Enter") kaptanGiris(); });
+
+/* ================= Kaptan girişi (bar) ================= */
+
+// Sayfa açılışında aktif kaptanları giriş ekranındaki listeye doldur.
+async function kaptanlariYukle() {
+  try {
+    const { data, error } = await SB.rpc("kaptan_liste_ac");
+    if (error || !data) return;
+    const sel = document.getElementById("kaptanSec");
+    sel.innerHTML = '<option value="">Kaptan seçin…</option>' +
+      data.map(k => '<option value="' + htmlEsc(k.kod) + '">' + htmlEsc(k.ad) + '</option>').join("");
+  } catch (e) { /* offline: kaptan girişi kullanılamaz, mutfak kod girişi çalışır */ }
+}
+
+async function kaptanGiris() {
+  const err = document.getElementById("kaptanHata");
+  const kod = document.getElementById("kaptanSec").value;
+  const pin = document.getElementById("kaptanPin").value.trim();
+  if (!kod) { err.textContent = "Kaptan seçin."; return; }
+  if (!pin) { err.textContent = "PIN girin."; return; }
+  try {
+    const { data, error } = await SB.rpc("kaptan_giris", { p_kod: kod, p_pin: pin });
+    if (error) { err.textContent = "Kaptan veya PIN hatalı."; return; }
+    KAPTAN = { kod: kod, ad: data.ad, pin: pin };
+    sessionStorage.setItem("gurok_kaptan_kod", kod);
+    sessionStorage.setItem("gurok_kaptan_pin", pin);
+    sessionStorage.setItem("gurok_kaptan_ad", data.ad);
+    err.textContent = "";
+    document.getElementById("kaptanPin").value = "";
+    barSecimGoster();
+  } catch (e) { err.textContent = "Bağlantı hatası."; }
+}
+
+function barSecimGoster() {
+  document.getElementById("kilit").style.display = "none";
+  document.getElementById("bolumEkran").style.display = "none";
+  document.getElementById("ana").style.display = "none";
+  document.getElementById("barEkran").style.display = "";
+  document.getElementById("kaptanAdEt").textContent = "Kaptan: " + (KAPTAN ? KAPTAN.ad : "");
+  document.getElementById("barButonlar").innerHTML = D.map(o =>
+    '<button class="bolum-btn" onclick="barSec(' + JSON.stringify(o).replace(/"/g, "&quot;") + ')">'
+    + htmlEsc(kisaKod(o.c)) + ' — ' + htmlEsc(o.n) + '</button>').join("");
+}
+
+async function barSec(o) {
+  sessionStorage.setItem("gurok_birim", o.c);
+  document.getElementById("barEkran").style.display = "none";
+  await birimAc({ c: o.c, n: o.n, i: o.i, bl: null });
+}
+
+function kaptanaCik() {
+  KAPTAN = null;
+  ["gurok_kaptan_kod", "gurok_kaptan_pin", "gurok_kaptan_ad"].forEach(k => sessionStorage.removeItem(k));
+  document.getElementById("barEkran").style.display = "none";
+  document.getElementById("ana").style.display = "none";
+  document.getElementById("kilit").style.display = "";
+}
 
 async function girisYap() {
   const err = document.getElementById("kodHata");
@@ -147,8 +222,8 @@ async function girisYap() {
   sessionStorage.setItem("gurok_pin", PIN || "");
 
   if (c.tip === "bar") {
-    sessionStorage.setItem("gurok_birim", c.o.c);
-    await birimAc({ c: c.o.c, n: c.o.n, i: c.o.i, bl: null });
+    document.getElementById("kodHata").textContent =
+      "Bar girişi artık KAPTAN ile yapılır — yukarıdan kaptanınızı seçip PIN girin.";
     return;
   }
   if (c.m.b.length === 1) {
@@ -214,11 +289,15 @@ function barDegistir() {
     return;
   }
   sessionStorage.removeItem("gurok_birim");
-  sessionStorage.removeItem("gurok_pin");
   C = null;
   kirli = false;
-  PIN = null;
   document.getElementById("ana").style.display = "none";
+
+  // Kaptan girişi varsa: bar değiştir = yeniden bar seç (kaptan oturumu korunur).
+  if (KAPTAN) { barSecimGoster(); return; }
+
+  sessionStorage.removeItem("gurok_pin");
+  PIN = null;
   document.getElementById("kilit").style.display = "";
   kodInput.value = "";
   pinInput.value = "";
@@ -226,6 +305,17 @@ function barDegistir() {
   document.getElementById("kodHata").textContent = "";
   kodInput.focus();
 }
+
+// Giriş ekranındaki kaptan listesini doldur
+kaptanlariYukle();
+
+// Sekme oturumundan kaptanı geri yükle (sekme kapanınca silinir)
+(function kaptanOturumGeriYukle() {
+  const kod = sessionStorage.getItem("gurok_kaptan_kod");
+  const ad  = sessionStorage.getItem("gurok_kaptan_ad");
+  const pin = sessionStorage.getItem("gurok_kaptan_pin");
+  if (kod && ad && pin) KAPTAN = { kod, ad, pin };
+})();
 
 // Sekme oturumunda kayıtlı birim varsa tekrar sorma (sekme kapanınca silinir)
 PIN = sessionStorage.getItem("gurok_pin") || null;
@@ -236,8 +326,9 @@ if (kayitliBirim) {
     const m = M.find(x => x.c === kod);
     if (m) mutfakBolumAc(m, bolum);
   } else {
+    // Bar: yalnızca kaptan oturumu varsa otomatik aç; yoksa kaptan seçimi/girişi gerekir.
     const o = D.find(x => x.c === kod);
-    if (o) birimAc({ c: o.c, n: o.n, i: o.i, bl: null });
+    if (o && KAPTAN) birimAc({ c: o.c, n: o.n, i: o.i, bl: null });
   }
 }
 if (!C) kodInput.focus();
@@ -506,7 +597,9 @@ async function gonder() {
   try {
     const { data, error } = await SB.rpc("siparis_gonder", {
       p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler,
-      p_bolum: C.bl, p_istemci_id: siparisId, p_pin: PIN
+      p_bolum: C.bl, p_istemci_id: siparisId, p_pin: PIN,
+      p_kaptan_kod: KAPTAN ? KAPTAN.kod : null,
+      p_kaptan_pin: KAPTAN ? KAPTAN.pin : null
     });
     if (error) throw error;
 
