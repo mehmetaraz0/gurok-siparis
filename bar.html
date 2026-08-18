@@ -14,7 +14,7 @@
   <h2>SİPARİŞ GİRİŞİ</h2>
   <div id="kaptanGirisKutu">
     <p>Kaptan girişi (bar)</p>
-    <select id="kaptanSec" class="sb"><option value="">Kaptan seçin…</option></select>
+    <input type="text" id="kaptanKod" placeholder="Kullanıcı adı" autocomplete="off" maxlength="10" autocapitalize="off">
     <input type="password" id="kaptanPin" placeholder="PIN" autocomplete="off" maxlength="12" inputmode="numeric">
     <button id="kaptanBtn" onclick="kaptanGiris()">Devam</button>
     <div class="err" id="kaptanHata"></div>
@@ -128,26 +128,16 @@ const kodInput = document.getElementById("kod");
 const pinInput = document.getElementById("pin");
 kodInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
 pinInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
+document.getElementById("kaptanKod").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("kaptanPin").focus(); });
 document.getElementById("kaptanPin").addEventListener("keydown", e => { if (e.key === "Enter") kaptanGiris(); });
 
 /* ================= Kaptan girişi (bar) ================= */
 
-// Sayfa açılışında aktif kaptanları giriş ekranındaki listeye doldur.
-async function kaptanlariYukle() {
-  try {
-    const { data, error } = await SB.rpc("kaptan_liste_ac");
-    if (error || !data) return;
-    const sel = document.getElementById("kaptanSec");
-    sel.innerHTML = '<option value="">Kaptan seçin…</option>' +
-      data.map(k => '<option value="' + htmlEsc(k.kod) + '">' + htmlEsc(k.ad) + '</option>').join("");
-  } catch (e) { /* offline: kaptan girişi kullanılamaz, mutfak kod girişi çalışır */ }
-}
-
 async function kaptanGiris() {
   const err = document.getElementById("kaptanHata");
-  const kod = document.getElementById("kaptanSec").value;
+  const kod = document.getElementById("kaptanKod").value.trim();
   const pin = document.getElementById("kaptanPin").value.trim();
-  if (!kod) { err.textContent = "Kaptan seçin."; return; }
+  if (!kod) { err.textContent = "Kullanıcı adı girin."; return; }
   if (!pin) { err.textContent = "PIN girin."; return; }
   try {
     const { data, error } = await SB.rpc("kaptan_giris", { p_kod: kod, p_pin: pin });
@@ -157,6 +147,7 @@ async function kaptanGiris() {
     sessionStorage.setItem("gurok_kaptan_pin", pin);
     sessionStorage.setItem("gurok_kaptan_ad", data.ad);
     err.textContent = "";
+    document.getElementById("kaptanKod").value = "";
     document.getElementById("kaptanPin").value = "";
     barSecimGoster();
   } catch (e) { err.textContent = "Bağlantı hatası."; }
@@ -305,9 +296,6 @@ function barDegistir() {
   document.getElementById("kodHata").textContent = "";
   kodInput.focus();
 }
-
-// Giriş ekranındaki kaptan listesini doldur
-kaptanlariYukle();
 
 // Sekme oturumundan kaptanı geri yükle (sekme kapanınca silinir)
 (function kaptanOturumGeriYukle() {
