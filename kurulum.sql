@@ -908,6 +908,33 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+-- Admin: kaptan PIN (şifre) SIFIRLA (unutulan PIN için; eski PIN gerekmez)
+create or replace function public.kaptan_pin_degistir(p_sifre text, p_kod text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if coalesce(p_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
+  update kaptan set pin = extensions.crypt(p_pin, extensions.gen_salt('bf'))
+   where lower(kod) = lower(coalesce(p_kod,''));
+  if not found then raise exception 'Kaptan bulunamadi'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Kaptan KENDİ şifresini değiştirir: eski PIN'i bilmek yeterli (admin şifresi GEREKMEZ).
+create or replace function public.kaptan_sifre_degistir(p_kod text, p_eski_pin text, p_yeni_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_var boolean;
+begin
+  if coalesce(p_yeni_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'Yeni PIN 3-12 haneli sayi olmali'; end if;
+  select true into v_var from kaptan
+   where lower(kod) = lower(coalesce(p_kod,'')) and aktif
+     and pin = extensions.crypt(coalesce(p_eski_pin,''), pin);
+  if v_var is null then raise exception 'Eski PIN hatali'; end if;
+  update kaptan set pin = extensions.crypt(p_yeni_pin, extensions.gen_salt('bf'))
+   where lower(kod) = lower(coalesce(p_kod,''));
+  return jsonb_build_object('ok', true);
+end $$;
+
 
 -- ================= İZİNLER (anon yalnızca fonksiyonları çağırır) =================
 revoke all on all functions in schema public from public;
@@ -921,6 +948,8 @@ grant execute on function public.kaptan_giris(text, text)                       
 grant execute on function public.kaptan_liste(text)                                   to anon;
 grant execute on function public.kaptan_ekle(text, text, text, text)                  to anon;
 grant execute on function public.kaptan_sil(text, text)                               to anon;
+grant execute on function public.kaptan_pin_degistir(text, text, text)                to anon;
+grant execute on function public.kaptan_sifre_degistir(text, text, text)              to anon;
 grant execute on function public.depo_liste(text, date)                               to anon;
 grant execute on function public.depo_envanter(text, date, date)                      to anon;
 grant execute on function public.depo_kalem_guncelle(text, text, text, int)           to anon;

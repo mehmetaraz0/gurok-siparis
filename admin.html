@@ -413,7 +413,10 @@ async function kaptanListele() {
     kutu.innerHTML = list.length
       ? '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th></th></tr></thead><tbody>' +
         list.map(k => '<tr><td><b>' + htmlEsc(k.kod) + '</b></td><td>' + htmlEsc(k.ad) + '</td>' +
-          '<td><button class="cb" style="width:auto;margin:0;padding:6px 12px" onclick="kaptanSil(\'' +
+          '<td style="white-space:nowrap">' +
+          '<button class="cb" style="width:auto;margin:0 6px 0 0;padding:6px 12px" onclick="kaptanSifre(\'' +
+          htmlEsc(k.kod) + '\')">🔑 Şifre</button>' +
+          '<button class="cb" style="width:auto;margin:0;padding:6px 12px" onclick="kaptanSil(\'' +
           htmlEsc(k.kod) + '\')">Sil</button></td></tr>').join("") + '</tbody></table>'
       : '<div class="em">Henüz kaptan yok. Yukarıdan ekleyin.</div>';
   } catch (e) { kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata") + '</div>'; }
@@ -433,6 +436,17 @@ async function kaptanEkle() {
     await kaptanListele();
   } catch (e) { alert("Eklenemedi: " + (e.message || "hata")); }
 }
+async function kaptanSifre(kod) {
+  const pin = prompt(kod + " için yeni PIN (3-12 hane):");
+  if (pin === null) return;                       // iptal
+  if (!/^[0-9]{3,12}$/.test(pin.trim())) { alert("PIN 3-12 haneli sayı olmalı."); return; }
+  try {
+    const { error } = await SB.rpc("kaptan_pin_degistir", { p_sifre: SIFRE, p_kod: kod, p_pin: pin.trim() });
+    if (error) throw error;
+    alert(kod + " şifresi değiştirildi.");
+  } catch (e) { alert("Değiştirilemedi: " + (e.message || "hata")); }
+}
+
 async function kaptanSil(kod) {
   if (!confirm(kod + " kaptanı silinsin mi?")) return;
   try {

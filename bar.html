@@ -32,7 +32,8 @@
   <h2>BAR SEÇ</h2>
   <p id="kaptanAdEt">—</p>
   <div id="barButonlar"></div>
-  <button class="cb" style="margin-top:14px" onclick="kaptanaCik()">← Kaptan çıkışı</button>
+  <button class="cb" style="margin-top:14px" onclick="kaptanSifreDegistir()">🔑 Şifremi değiştir</button>
+  <button class="cb" style="margin-top:8px" onclick="kaptanaCik()">← Kaptan çıkışı</button>
 </div>
 
 <!-- ===== Bölüm seçim ekranı (çok bölümlü mutfaklar) ===== -->
@@ -168,6 +169,25 @@ async function barSec(o) {
   sessionStorage.setItem("gurok_birim", o.c);
   document.getElementById("barEkran").style.display = "none";
   await birimAc({ c: o.c, n: o.n, i: o.i, bl: null });
+}
+
+async function kaptanSifreDegistir() {
+  if (!KAPTAN) return;
+  const yeni = prompt("Yeni PIN (3-12 hane):");
+  if (yeni === null) return;                        // iptal
+  const y = yeni.trim();
+  if (!/^[0-9]{3,12}$/.test(y)) { alert("PIN 3-12 haneli sayı olmalı."); return; }
+  const yeni2 = prompt("Yeni PIN'i tekrar girin:");
+  if (yeni2 === null) return;
+  if (y !== yeni2.trim()) { alert("İki PIN aynı değil, tekrar deneyin."); return; }
+  try {
+    const { error } = await SB.rpc("kaptan_sifre_degistir",
+      { p_kod: KAPTAN.kod, p_eski_pin: KAPTAN.pin, p_yeni_pin: y });
+    if (error) throw error;
+    KAPTAN.pin = y;
+    sessionStorage.setItem("gurok_kaptan_pin", y);
+    alert("Şifreniz değiştirildi.");
+  } catch (e) { alert("Değiştirilemedi: " + (e.message || "hata")); }
 }
 
 function kaptanaCik() {
