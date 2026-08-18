@@ -76,6 +76,15 @@ insert into public.outlet_pin (outlet_kod, etiket, pin)
 select kod, '1', pin from public.outletler where pin is not null
 on conflict (outlet_kod, etiket) do nothing;
 
+-- Kaptanlar: bara bağlı DEĞİL, kişi bazlı kimlik. Kaptan kendi PIN'iyle girer,
+-- sipariş vereceği barı seçer. 'ad' depoda 'gönderen' olarak görünür.
+create table if not exists public.kaptan (
+  kod   text primary key,
+  ad    text not null,
+  pin   text not null,               -- bcrypt hash
+  aktif boolean not null default true
+);
+
 create table if not exists public.stok (
   kod        text primary key,
   ad         text,
@@ -119,6 +128,7 @@ alter table public.outlet_pin enable row level security;
 alter table public.stok       enable row level security;
 alter table public.katalog    enable row level security;
 alter table public.urun_min   enable row level security;
+alter table public.kaptan     enable row level security;
 revoke all on public.siparisler from anon, authenticated;
 revoke all on public.ayarlar    from anon, authenticated;
 revoke all on public.outletler  from anon, authenticated;
@@ -126,6 +136,7 @@ revoke all on public.outlet_pin from anon, authenticated;
 revoke all on public.stok       from anon, authenticated;
 revoke all on public.katalog    from anon, authenticated;
 revoke all on public.urun_min   from anon, authenticated;
+revoke all on public.kaptan     from anon, authenticated;
 
 -- ================= ŞİFRELER (mevcut olan KORUNUR) =================
 insert into public.ayarlar (anahtar, deger)
@@ -234,7 +245,9 @@ create or replace function public.siparis_gonder(
   p_kalemler    jsonb,
   p_bolum       text default null,
   p_istemci_id  text default null,
-  p_pin         text default null
+  p_pin         text default null,
+  p_kaptan_kod  text default null,  -- bar: kaptan kimliği
+  p_kaptan_pin  text default null
 )
 returns jsonb
 language plpgsql security definer set search_path = public, extensions
@@ -243,19 +256,29 @@ declare
   v_tarih date := (now() at time zone 'Europe/Istanbul')::date;
   v_no text; v_saat timestamptz; v_sira int; v_deneme int := 0;
   v_el jsonb; v_m numeric; v_ad text; v_liste text; v_gunluk int;
-  v_pinvar int; v_gonderen text;
+  v_pinvar int; v_gonderen text; v_tur text;
   v_iid text := nullif(left(coalesce(p_istemci_id, ''), 64), '');
   rec record;
 begin
-  -- 1) Outlet gerçek mi + PIN (varsa) doğru mu; ad'ı sunucu belirler.
-  --    Çoklu PIN: girilen PIN hangi kişiye uyuyorsa etiketi 'gonderen' olur.
-  select ad into v_ad from outletler where kod = p_outlet_kod;
-  if not found then raise exception 'Gecersiz outlet'; end if;
-  select count(*) into v_pinvar from outlet_pin where outlet_kod = p_outlet_kod;
-  if v_pinvar > 0 then
-    select etiket into v_gonderen from outlet_pin
-     where outlet_kod = p_outlet_kod and pin = extensions.crypt(coalesce(p_pin,''), pin) limit 1;
-    if v_gonderen is null then raise exception 'PIN hatali'; end if;
+  -- 1) Outlet gerçek mi + kimlik. Bar => kaptan zorunlu; mutfak => outlet_pin (eski).
+  --    ad'ı ve gonderen'i SUNUCU belirler.
+  select ad, tur into v_ad, v_tur from outletler where kod = p_outlet_kod;
+  if v_ad is null then raise exception 'Gecersiz outlet'; end if;
+
+  if v_tur = 'bar' then
+    -- Kaptan bazlı kimlik: geçerli + aktif kaptan PIN'i şart. gonderen = kaptan adı.
+    select ad into v_gonderen from kaptan
+     where kod = p_kaptan_kod and aktif
+       and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
+    if v_gonderen is null then raise exception 'Kaptan girisi gerekli'; end if;
+  else
+    -- Mutfak (ve diğer): outlet_pin akışı — DEĞİŞMEDİ.
+    select count(*) into v_pinvar from outlet_pin where outlet_kod = p_outlet_kod;
+    if v_pinvar > 0 then
+      select etiket into v_gonderen from outlet_pin
+       where outlet_kod = p_outlet_kod and pin = extensions.crypt(coalesce(p_pin,''), pin) limit 1;
+      if v_gonderen is null then raise exception 'PIN hatali'; end if;
+    end if;
   end if;
 
   -- 2) Kalem listesi biçimi
@@ -832,6 +855,57 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+-- ===== KAPTAN =====
+-- Giriş ekranı için aktif kaptan adları (şifresiz; PIN dönmez)
+create or replace function public.kaptan_liste_ac()
+returns jsonb language sql security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('kod', kod, 'ad', ad) order by ad), '[]'::jsonb)
+    from kaptan where aktif;
+$$;
+
+-- Kaptan girişi: kod + PIN doğrula
+create or replace function public.kaptan_giris(p_kod text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_ad text;
+begin
+  select ad into v_ad from kaptan
+   where kod = p_kod and aktif and pin = extensions.crypt(coalesce(p_pin,''), pin);
+  if v_ad is null then raise exception 'Kaptan kodu veya PIN hatali'; end if;
+  return jsonb_build_object('ok', true, 'kod', p_kod, 'ad', v_ad);
+end $$;
+
+-- Admin: kaptan listesi (PIN yok)
+create or replace function public.kaptan_liste(p_sifre text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('kod', kod, 'ad', ad, 'aktif', aktif) order by ad)
+    from kaptan), '[]'::jsonb);
+end $$;
+
+-- Admin: kaptan ekle/güncelle
+create or replace function public.kaptan_ekle(p_sifre text, p_kod text, p_ad text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if coalesce(p_kod,'') !~ '^[A-Za-z0-9]{1,10}$' then raise exception 'Kod 1-10 harf/rakam olmali'; end if;
+  if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
+  if coalesce(p_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
+  insert into kaptan (kod, ad, pin, aktif)
+  values (p_kod, left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf')), true)
+  on conflict (kod) do update set ad = excluded.ad, pin = excluded.pin, aktif = true;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Admin: kaptan sil
+create or replace function public.kaptan_sil(p_sifre text, p_kod text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  delete from kaptan where kod = p_kod;
+  return jsonb_build_object('ok', true);
+end $$;
+
 
 -- ================= İZİNLER (anon yalnızca fonksiyonları çağırır) =================
 revoke all on all functions in schema public from public;
@@ -839,7 +913,12 @@ revoke all on all functions in schema public from public;
 grant execute on function public.outlet_giris(text, text)                             to anon;
 grant execute on function public.katalog_getir(text)                                  to anon;
 grant execute on function public.stok_gizli_kodlar()                                  to anon;
-grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text)  to anon;
+grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text, text) to anon;
+grant execute on function public.kaptan_liste_ac()                                    to anon;
+grant execute on function public.kaptan_giris(text, text)                             to anon;
+grant execute on function public.kaptan_liste(text)                                   to anon;
+grant execute on function public.kaptan_ekle(text, text, text, text)                  to anon;
+grant execute on function public.kaptan_sil(text, text)                               to anon;
 grant execute on function public.depo_liste(text, date)                               to anon;
 grant execute on function public.depo_envanter(text, date, date)                      to anon;
 grant execute on function public.depo_kalem_guncelle(text, text, text, int)           to anon;
