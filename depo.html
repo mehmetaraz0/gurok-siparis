@@ -144,6 +144,7 @@
 <script src="veri.js"></script>
 <script src="mutfak.js"></script>
 <script src="tuketim.js"></script>
+<script src="depo_sablon.js"></script>
 <script src="mutabakat.js"></script>
 <script src="config.js"></script>
 <script src="ortak.js"></script>
@@ -815,7 +816,9 @@ function cizTuketim() {
   const altSira = TUK_ALT_SIRA[TUK_AKTIF];
   let h = '<div class="depo-header"><span>' + htmlEsc(TUK_AKTIF) + '</span>'
         + '<span><span class="depo-count">' + Object.values(kat).reduce((n,l)=>n+l.length,0) + ' ürün</span>'
-        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:8px" onclick="tukKategoriExcel()">⬇ Excel indir</button></span></div>'
+        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:8px" onclick="tukKategoriExcel()">⬇ Excel indir</button>'
+        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(false)">📋 Depo Talep (LN)</button>'
+        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(true)">📋 Tümü (LN)</button></span></div>'
         + '<table class="tuk-tbl"><thead><tr><th>KOD</th><th>ÜRÜN ADI</th><th>BR</th>'
         + '<th>TÜKETİM</th><th>KALAN STOK</th><th>SİPARİŞ</th></tr></thead><tbody>';
 
@@ -889,6 +892,50 @@ function tukKategoriExcel() {
   XLSX.utils.book_append_sheet(wb, ws, sheetAd);
   const dosyaAd = "siparis_" + TUK_AKTIF.replace(/[^a-zA-Z0-9]+/g, "_") + "_" + bas + ".xlsx";
   XLSX.writeFile(wb, dosyaAd);
+}
+
+// Sipariş girilen kalemleri kategori/alt grup sırasında toplar ({k,a,b,m} biçiminde).
+// tumKategoriler=true ise TÜM kategoriler taranır (tek dosyada tüm sipariş).
+function tukSecilenKalemler(tumKategoriler) {
+  if (!TUKETIM) return [];
+  const kats = tumKategoriler ? TUK_KATEGORILER.filter(t => TUKETIM.kategoriler[t])
+                              : (TUK_AKTIF ? [TUK_AKTIF] : []);
+  const secilen = [];
+  kats.forEach(katAd => {
+    const kat = TUKETIM.kategoriler[katAd] || {};
+    const altSira = TUK_ALT_SIRA[katAd];
+    const bloklar = altSira ? altSira.filter(a => kat[a]).map(a => [a, kat[a]]) : Object.entries(kat);
+    bloklar.forEach(([, list]) => {
+      list.slice().sort((a, b) => a.ad.localeCompare(b.ad, "tr")).forEach(u => {
+        const m = TUK_SIPARIS[u.kod] || 0;
+        if (m > 0) secilen.push({ k: u.kod, a: u.ad, b: u.birim, m: m });
+      });
+    });
+  });
+  return secilen;
+}
+
+// LN tdpur (depo talep) şablonunda çıktı: 1. satır sabit başlık, her ürün 2. satırın
+// kopyası; yalnız T(sıra 10'ar) / V(kod) / W(ad) / X(miktar) / Y(birim) değişir.
+async function tukDepoSiparisExcel(tumu) {
+  const kalemler = tukSecilenKalemler(tumu);
+  if (!kalemler.length) {
+    alert("Sipariş girilmemiş.\n\nÖnce SİPARİŞ sütununa miktar yazın, sonra Excel alın.");
+    return;
+  }
+  try {
+    const blob = await buildDepoSiparisBlob(kalemler);
+    const bas = document.getElementById("tukBas").value;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "depo_talep_" + (tumu ? "TUMU" : TUK_AKTIF.replace(/[^a-zA-Z0-9]+/g, "_")) + "_" + bas + ".xlsx";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error(e);
+    alert("Excel üretilemedi: " + (e.message || "hata"));
+  }
 }
 
 function tuketimSekmeGec(kat) { TUK_AKTIF = kat; cizTuketim(); }
