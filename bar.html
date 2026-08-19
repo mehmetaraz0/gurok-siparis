@@ -9,31 +9,25 @@
 </head>
 <body>
 
-<!-- ===== Giriş ekranı ===== -->
+<!-- ===== Giriş ekranı (personel: bar kaptanı + mutfak) ===== -->
 <div class="kilit" id="kilit">
   <h2>SİPARİŞ GİRİŞİ</h2>
   <div id="kaptanGirisKutu">
-    <p>Kaptan girişi (bar)</p>
+    <p>Kullanıcı girişi</p>
     <input type="text" id="kaptanKod" placeholder="Kullanıcı adı" autocomplete="off" maxlength="10" autocapitalize="off">
     <input type="password" id="kaptanPin" placeholder="PIN" autocomplete="off" maxlength="12" inputmode="numeric">
     <button id="kaptanBtn" onclick="kaptanGiris()">Devam</button>
     <div class="err" id="kaptanHata"></div>
   </div>
-  <hr style="margin:18px 0;opacity:.25">
-  <p>Mutfak birim kodu</p>
-  <input type="text" id="kod" placeholder="Kod" autocomplete="off" maxlength="6">
-  <input type="password" id="pin" placeholder="PIN" autocomplete="off" maxlength="12" inputmode="numeric" style="display:none">
-  <button id="girisBtn" onclick="girisYap()">Devam</button>
-  <div class="err" id="kodHata"></div>
 </div>
 
-<!-- ===== Bar seçim ekranı (kaptan girişi sonrası) ===== -->
+<!-- ===== Birim seçim ekranı (giriş sonrası: bar + mutfak) ===== -->
 <div class="kilit" id="barEkran" style="display:none">
-  <h2>BAR SEÇ</h2>
+  <h2>BİRİM SEÇ</h2>
   <p id="kaptanAdEt">—</p>
   <div id="barButonlar"></div>
   <button class="cb" style="margin-top:14px" onclick="kaptanSifreDegistir()">🔑 Şifremi değiştir</button>
-  <button class="cb" style="margin-top:8px" onclick="kaptanaCik()">← Kaptan çıkışı</button>
+  <button class="cb" style="margin-top:8px" onclick="kaptanaCik()">← Çıkış</button>
 </div>
 
 <!-- ===== Bölüm seçim ekranı (çok bölümlü mutfaklar) ===== -->
@@ -41,7 +35,7 @@
   <h2 id="bolumBaslik">MUTFAK</h2>
   <p>Bölümünüzü seçin</p>
   <div id="bolumButonlar"></div>
-  <button class="cb" style="margin-top:14px" onclick="kodaDon()">← Kod ekranına dön</button>
+  <button class="cb" style="margin-top:14px" onclick="birimSecimGoster()">← Birim seçime dön</button>
 </div>
 
 <!-- ===== Ana ekran ===== -->
@@ -100,39 +94,13 @@ function yeniSiparisId() {
     : Date.now() + "-" + Math.random().toString(16).slice(2);
 }
 
-/* ================= Kod ile giriş =================
-   Bar   : CSM315 → "B315"  (B + üç hane)
-   Mutfak: CMM201 → "M201"  (M + üç hane)
-
-   Bar B, mutfak M ile başlar; çakışma olmaz. Tam kod (CSM315 / CMM201) da
-   kabul edilir. Örnek kodlar giriş ekranında GÖSTERİLMEZ.
-
-   Bu bir kilit DEĞİLDİR — kodlar tahmin edilebilir. Amacı personeli doğru
-   birime yönlendirmek ve yanlış yere sipariş girilmesini önlemek. */
-
-function girisCoz(girilen) {
-  const t = String(girilen || "").trim().toUpperCase().replace(/[^0-9A-Z]/g, "");
-  if (!t) return null;
-
-  const mutfak = kod => M.find(m => m.c === kod) || null;
-  const bar    = kod => D.find(o => o.c === kod) || null;
-
-  let x;
-  if (/^CMM\d{3}$/.test(t) && (x = mutfak(t)))                  return { tip: "mutfak", m: x };
-  if (/^M\d{3}$/.test(t)   && (x = mutfak("CMM" + t.slice(1)))) return { tip: "mutfak", m: x };
-  if (/^CSM\d{3}$/.test(t) && (x = bar(t)))                     return { tip: "bar", o: x };
-  if (/^B\d{3}$/.test(t)   && (x = bar("CSM" + t.slice(1))))    return { tip: "bar", o: x };
-  return null;
-}
-
-const kodInput = document.getElementById("kod");
-const pinInput = document.getElementById("pin");
-kodInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
-pinInput.addEventListener("keydown", e => { if (e.key === "Enter") girisYap(); });
 document.getElementById("kaptanKod").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("kaptanPin").focus(); });
 document.getElementById("kaptanPin").addEventListener("keydown", e => { if (e.key === "Enter") kaptanGiris(); });
 
-/* ================= Kaptan girişi (bar) ================= */
+/* ================= Kullanıcı (kaptan/personel) girişi =================
+   Herkes tek kullanıcı adı + PIN ile girer, sonra birim seçer:
+   bar (D listesi) ya da mutfak (M listesi, bölümlü). Kimlik kişiye bağlı,
+   sabit bir birime değil. */
 
 async function kaptanGiris() {
   const err = document.getElementById("kaptanHata");
@@ -150,25 +118,36 @@ async function kaptanGiris() {
     err.textContent = "";
     document.getElementById("kaptanKod").value = "";
     document.getElementById("kaptanPin").value = "";
-    barSecimGoster();
+    birimSecimGoster();
   } catch (e) { err.textContent = "Bağlantı hatası."; }
 }
 
-function barSecimGoster() {
+// Giriş sonrası birim seçim ekranı: barlar (D) + mutfaklar (M) birlikte.
+function birimSecimGoster() {
   document.getElementById("kilit").style.display = "none";
   document.getElementById("bolumEkran").style.display = "none";
   document.getElementById("ana").style.display = "none";
   document.getElementById("barEkran").style.display = "";
-  document.getElementById("kaptanAdEt").textContent = "Kaptan: " + (KAPTAN ? KAPTAN.ad : "");
-  document.getElementById("barButonlar").innerHTML = D.map(o =>
+  document.getElementById("kaptanAdEt").textContent = "Kullanıcı: " + (KAPTAN ? KAPTAN.ad : "");
+  const barlar = D.map(o =>
     '<button class="bolum-btn" onclick="barSec(' + JSON.stringify(o).replace(/"/g, "&quot;") + ')">'
     + htmlEsc(kisaKod(o.c)) + ' — ' + htmlEsc(o.n) + '</button>').join("");
+  const mutfaklar = (typeof M !== "undefined" ? M : []).map(m =>
+    '<button class="bolum-btn" onclick="mutfakSec(' + JSON.stringify(m).replace(/"/g, "&quot;") + ')">'
+    + htmlEsc(kisaKod(m.c)) + ' — ' + htmlEsc(m.n) + ' <span>mutfak</span></button>').join("");
+  document.getElementById("barButonlar").innerHTML = barlar + mutfaklar;
 }
 
 async function barSec(o) {
   sessionStorage.setItem("gurok_birim", o.c);
   document.getElementById("barEkran").style.display = "none";
   await birimAc({ c: o.c, n: o.n, i: o.i, bl: null });
+}
+
+// Mutfak seçildi: tek bölümse direkt aç, çok bölümse bölüm ekranını göster.
+function mutfakSec(m) {
+  if (m.b && m.b.length === 1) { mutfakBolumAc(m, m.b[0]); }
+  else { bolumSecimGoster(m); }
 }
 
 async function kaptanSifreDegistir() {
@@ -198,54 +177,9 @@ function kaptanaCik() {
   document.getElementById("kilit").style.display = "";
 }
 
-async function girisYap() {
-  const err = document.getElementById("kodHata");
-  const c = girisCoz(kodInput.value);
-
-  if (!c) {
-    err.textContent = "Bu kodla bir birim bulunamadı.";
-    kodInput.select();
-    return;
-  }
-
-  const kod = c.tip === "bar" ? c.o.c : c.m.c;
-  const pin = pinInput.value.trim();
-
-  // Sunucuda outlet + PIN doğrula. PIN gerekiyorsa alan açılır.
-  // outlet_giris fonksiyonu yoksa (SQL uygulanmadan) eski davranışa düşülür.
-  try {
-    const { error } = await SB.rpc("outlet_giris", { p_kod: kod, p_pin: pin || null });
-    if (error) {
-      const m = error.message || "";
-      if (/PIN/i.test(m)) {          // PIN gerekli ya da hatalı
-        pinInput.style.display = "";
-        pinInput.focus();
-        err.textContent = pin ? "PIN hatalı." : "Bu birim için PIN gerekli.";
-        return;
-      }
-      if (/Gecersiz/i.test(m)) { err.textContent = "Bu kodla bir birim bulunamadı."; return; }
-      // Fonksiyon yoksa / başka RPC hatası: PIN'siz devam et (geri uyumluluk)
-    }
-  } catch (e) { /* ağ hatası — offline akışına bırak */ }
-
-  err.textContent = "";
-  PIN = pin || null;
-  sessionStorage.setItem("gurok_pin", PIN || "");
-
-  if (c.tip === "bar") {
-    document.getElementById("kodHata").textContent =
-      "Bar girişi artık KAPTAN ile yapılır — yukarıdan kaptanınızı seçip PIN girin.";
-    return;
-  }
-  if (c.m.b.length === 1) {
-    await mutfakBolumAc(c.m, c.m.b[0]);
-  } else {
-    bolumSecimGoster(c.m);
-  }
-}
-
 function bolumSecimGoster(m) {
   document.getElementById("kilit").style.display = "none";
+  document.getElementById("barEkran").style.display = "none";
   document.getElementById("bolumEkran").style.display = "";
   document.getElementById("bolumBaslik").textContent = m.n;
   document.getElementById("bolumButonlar").innerHTML = m.b.map(b =>
@@ -288,13 +222,6 @@ function anahtar() {
   return C.c + (C.bl ? "|" + C.bl : "");
 }
 
-function kodaDon() {
-  document.getElementById("bolumEkran").style.display = "none";
-  document.getElementById("kilit").style.display = "";
-  kodInput.value = "";
-  kodInput.focus();
-}
-
 function barDegistir() {
   if (kirli && !confirm("Gönderilmemiş değişikliğiniz var. Yine de birim değiştirilsin mi?\n\n(Girdikleriniz bu cihazda taslak olarak saklanır.)")) {
     return;
@@ -303,18 +230,10 @@ function barDegistir() {
   C = null;
   kirli = false;
   document.getElementById("ana").style.display = "none";
-
-  // Kaptan girişi varsa: bar değiştir = yeniden bar seç (kaptan oturumu korunur).
-  if (KAPTAN) { barSecimGoster(); return; }
-
-  sessionStorage.removeItem("gurok_pin");
-  PIN = null;
-  document.getElementById("kilit").style.display = "";
-  kodInput.value = "";
-  pinInput.value = "";
-  pinInput.style.display = "none";
-  document.getElementById("kodHata").textContent = "";
-  kodInput.focus();
+  // Kimlik korunur; yeniden birim seçimine dön.
+  if (KAPTAN) { birimSecimGoster(); return; }
+  // Kimlik yoksa girişe dön.
+  kaptanaCik();
 }
 
 // Sekme oturumundan kaptanı geri yükle (sekme kapanınca silinir)
@@ -325,21 +244,20 @@ function barDegistir() {
   if (kod && ad && pin) KAPTAN = { kod, ad, pin };
 })();
 
-// Sekme oturumunda kayıtlı birim varsa tekrar sorma (sekme kapanınca silinir)
-PIN = sessionStorage.getItem("gurok_pin") || null;
+// Sekme oturumunda kayıtlı birim varsa tekrar sorma (yalnız giriş yapılmışsa).
+// Giriş yoksa kilit ekranı açık kalır; birim otomatik açılmaz.
 const kayitliBirim = sessionStorage.getItem("gurok_birim");
-if (kayitliBirim) {
+if (kayitliBirim && KAPTAN) {
   const [kod, bolum] = kayitliBirim.split("|");
   if (bolum) {
     const m = M.find(x => x.c === kod);
     if (m) mutfakBolumAc(m, bolum);
   } else {
-    // Bar: yalnızca kaptan oturumu varsa otomatik aç; yoksa kaptan seçimi/girişi gerekir.
     const o = D.find(x => x.c === kod);
-    if (o && KAPTAN) birimAc({ c: o.c, n: o.n, i: o.i, bl: null });
+    if (o) birimAc({ c: o.c, n: o.n, i: o.i, bl: null });
   }
 }
-if (!C) kodInput.focus();
+if (!C) document.getElementById("kaptanKod").focus();
 
 /* ================= Taslak (yerel) =================
    3408 kalemlik listede 40 kalem girip telefon kilitlenirse emek gitmesin diye

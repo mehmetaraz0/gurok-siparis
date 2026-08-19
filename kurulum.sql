@@ -260,26 +260,16 @@ declare
   v_iid text := nullif(left(coalesce(p_istemci_id, ''), 64), '');
   rec record;
 begin
-  -- 1) Outlet gerçek mi + kimlik. Bar => kaptan zorunlu; mutfak => outlet_pin (eski).
+  -- 1) Outlet gerçek mi + kimlik. TÜM birimler (bar + mutfak) kişi bazlı giriş ister.
   --    ad'ı ve gonderen'i SUNUCU belirler.
-  select ad, tur into v_ad, v_tur from outletler where kod = p_outlet_kod;
+  select ad into v_ad from outletler where kod = p_outlet_kod;
   if v_ad is null then raise exception 'Gecersiz outlet'; end if;
 
-  if v_tur = 'bar' then
-    -- Kaptan bazlı kimlik: geçerli + aktif kaptan PIN'i şart. gonderen = kaptan adı.
-    select ad into v_gonderen from kaptan
-     where kod = p_kaptan_kod and aktif
-       and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
-    if v_gonderen is null then raise exception 'Kaptan girisi gerekli'; end if;
-  else
-    -- Mutfak (ve diğer): outlet_pin akışı — DEĞİŞMEDİ.
-    select count(*) into v_pinvar from outlet_pin where outlet_kod = p_outlet_kod;
-    if v_pinvar > 0 then
-      select etiket into v_gonderen from outlet_pin
-       where outlet_kod = p_outlet_kod and pin = extensions.crypt(coalesce(p_pin,''), pin) limit 1;
-      if v_gonderen is null then raise exception 'PIN hatali'; end if;
-    end if;
-  end if;
+  -- Kişi (kaptan/personel) kimliği: geçerli + aktif kaptan PIN'i şart (kasa farketmez).
+  select ad into v_gonderen from kaptan
+   where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
+     and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
+  if v_gonderen is null then raise exception 'Kullanici girisi gerekli'; end if;
 
   -- 2) Kalem listesi biçimi
   if jsonb_typeof(p_kalemler) <> 'array' or jsonb_array_length(p_kalemler) = 0 then
