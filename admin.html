@@ -48,6 +48,7 @@
       <input id="kAd" placeholder="Ad Soyad" oninput="kaptanKodGuncelle()">
       <input id="kKod" placeholder="kullanıcı adı (otomatik)" maxlength="10" oninput="this.dataset.elle='1'" autocapitalize="off">
       <input id="kPin" placeholder="PIN (3-12 hane)" maxlength="12" inputmode="numeric">
+      <select id="kDep" title="Departman"><option value="bar">Bar</option><option value="mutfak">Mutfak</option><option value="hepsi">Hepsi</option></select>
       <button class="gb" onclick="kaptanEkle()">+ Ekle</button>
     </div>
     <div id="kaptanIcerik"><div class="em">Yükleniyor...</div></div>
@@ -410,9 +411,15 @@ async function kaptanListele() {
     const list = data || [];
     KAPTAN_KODLAR = new Set(list.map(k => k.kod));   // öneri çakışma kontrolü için
     document.getElementById("kaptanCount").textContent = list.length + " kaptan";
+    const depSel = (kod, d) => {
+      const o = (v, t) => '<option value="' + v + '"' + (d === v ? ' selected' : '') + '>' + t + '</option>';
+      return '<select onchange="kaptanDepDegistir(\'' + htmlEsc(kod) + '\', this.value)">' +
+        o("bar","Bar") + o("mutfak","Mutfak") + o("hepsi","Hepsi") + '</select>';
+    };
     kutu.innerHTML = list.length
-      ? '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th></th></tr></thead><tbody>' +
+      ? '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th>DEPARTMAN</th><th></th></tr></thead><tbody>' +
         list.map(k => '<tr><td><b>' + htmlEsc(k.kod) + '</b></td><td>' + htmlEsc(k.ad) + '</td>' +
+          '<td>' + depSel(k.kod, k.departman || "hepsi") + '</td>' +
           '<td style="white-space:nowrap">' +
           '<button class="cb" style="width:auto;margin:0 6px 0 0;padding:6px 12px" onclick="kaptanSifre(\'' +
           htmlEsc(k.kod) + '\')">🔑 Şifre</button>' +
@@ -425,9 +432,10 @@ async function kaptanEkle() {
   const kod = document.getElementById("kKod").value.trim();
   const ad = document.getElementById("kAd").value.trim();
   const pin = document.getElementById("kPin").value.trim();
+  const dep = document.getElementById("kDep").value;
   if (!kod || !ad || !pin) { alert("Kod, ad ve PIN gerekli."); return; }
   try {
-    const { error } = await SB.rpc("kaptan_ekle", { p_sifre: SIFRE, p_kod: kod, p_ad: ad, p_pin: pin });
+    const { error } = await SB.rpc("kaptan_ekle", { p_sifre: SIFRE, p_kod: kod, p_ad: ad, p_pin: pin, p_departman: dep });
     if (error) throw error;
     document.getElementById("kAd").value = "";
     document.getElementById("kKod").value = "";
@@ -435,6 +443,13 @@ async function kaptanEkle() {
     document.getElementById("kPin").value = "";
     await kaptanListele();
   } catch (e) { alert("Eklenemedi: " + (e.message || "hata")); }
+}
+
+async function kaptanDepDegistir(kod, dep) {
+  try {
+    const { error } = await SB.rpc("kaptan_departman", { p_sifre: SIFRE, p_kod: kod, p_departman: dep });
+    if (error) throw error;
+  } catch (e) { alert("Departman değiştirilemedi: " + (e.message || "hata")); await kaptanListele(); }
 }
 async function kaptanSifre(kod) {
   const pin = prompt(kod + " için yeni PIN (3-12 hane):");

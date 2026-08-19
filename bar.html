@@ -111,10 +111,11 @@ async function kaptanGiris() {
   try {
     const { data, error } = await SB.rpc("kaptan_giris", { p_kod: kod, p_pin: pin });
     if (error) { err.textContent = "Kaptan veya PIN hatalı."; return; }
-    KAPTAN = { kod: kod, ad: data.ad, pin: pin };
+    KAPTAN = { kod: kod, ad: data.ad, pin: pin, departman: data.departman || "hepsi" };
     sessionStorage.setItem("gurok_kaptan_kod", kod);
     sessionStorage.setItem("gurok_kaptan_pin", pin);
     sessionStorage.setItem("gurok_kaptan_ad", data.ad);
+    sessionStorage.setItem("gurok_kaptan_dep", KAPTAN.departman);
     err.textContent = "";
     document.getElementById("kaptanKod").value = "";
     document.getElementById("kaptanPin").value = "";
@@ -129,10 +130,11 @@ function birimSecimGoster() {
   document.getElementById("ana").style.display = "none";
   document.getElementById("barEkran").style.display = "";
   document.getElementById("kaptanAdEt").textContent = "Kullanıcı: " + (KAPTAN ? KAPTAN.ad : "");
-  const barlar = D.map(o =>
+  const dep = (KAPTAN && KAPTAN.departman) ? KAPTAN.departman : "hepsi";
+  const barlar = (dep === "mutfak") ? "" : D.map(o =>
     '<button class="bolum-btn" onclick="barSec(' + JSON.stringify(o).replace(/"/g, "&quot;") + ')">'
     + htmlEsc(kisaKod(o.c)) + ' — ' + htmlEsc(o.n) + '</button>').join("");
-  const mutfaklar = (typeof M !== "undefined" ? M : []).map(m =>
+  const mutfaklar = (dep === "bar") ? "" : (typeof M !== "undefined" ? M : []).map(m =>
     '<button class="bolum-btn" onclick="mutfakSec(' + JSON.stringify(m).replace(/"/g, "&quot;") + ')">'
     + htmlEsc(kisaKod(m.c)) + ' — ' + htmlEsc(m.n) + ' <span>mutfak</span></button>').join("");
   document.getElementById("barButonlar").innerHTML = barlar + mutfaklar;
@@ -171,7 +173,7 @@ async function kaptanSifreDegistir() {
 
 function kaptanaCik() {
   KAPTAN = null;
-  ["gurok_kaptan_kod", "gurok_kaptan_pin", "gurok_kaptan_ad"].forEach(k => sessionStorage.removeItem(k));
+  ["gurok_kaptan_kod", "gurok_kaptan_pin", "gurok_kaptan_ad", "gurok_kaptan_dep"].forEach(k => sessionStorage.removeItem(k));
   document.getElementById("barEkran").style.display = "none";
   document.getElementById("ana").style.display = "none";
   document.getElementById("kilit").style.display = "";
@@ -241,7 +243,8 @@ function barDegistir() {
   const kod = sessionStorage.getItem("gurok_kaptan_kod");
   const ad  = sessionStorage.getItem("gurok_kaptan_ad");
   const pin = sessionStorage.getItem("gurok_kaptan_pin");
-  if (kod && ad && pin) KAPTAN = { kod, ad, pin };
+  const dep = sessionStorage.getItem("gurok_kaptan_dep") || "hepsi";
+  if (kod && ad && pin) KAPTAN = { kod, ad, pin, departman: dep };
 })();
 
 // Sekme oturumunda kayıtlı birim varsa tekrar sorma (yalnız giriş yapılmışsa).

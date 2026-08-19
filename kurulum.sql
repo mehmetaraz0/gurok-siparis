@@ -84,6 +84,11 @@ create table if not exists public.kaptan (
   pin   text not null,               -- bcrypt hash
   aktif boolean not null default true
 );
+-- Departman: personel yalnızca kendi departmanının birimlerini görür.
+--   'bar'    -> sadece barlar, 'mutfak' -> sadece mutfaklar, 'hepsi' -> ikisi
+alter table public.kaptan add column if not exists departman text not null default 'hepsi';
+alter table public.kaptan drop constraint if exists kaptan_departman_chk;
+alter table public.kaptan add constraint kaptan_departman_chk check (departman in ('bar','mutfak','hepsi'));
 
 create table if not exists public.stok (
   kod        text primary key,
@@ -856,13 +861,13 @@ $$;
 -- Kaptan girişi: kod (BÜYÜK/küçük harf fark etmez) + PIN doğrula
 create or replace function public.kaptan_giris(p_kod text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_ad text; v_kod text;
+declare v_ad text; v_kod text; v_dep text;
 begin
-  select kod, ad into v_kod, v_ad from kaptan
+  select kod, ad, departman into v_kod, v_ad, v_dep from kaptan
    where lower(kod) = lower(coalesce(p_kod,'')) and aktif
      and pin = extensions.crypt(coalesce(p_pin,''), pin);
   if v_ad is null then raise exception 'Kaptan kodu veya PIN hatali'; end if;
-  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_ad);
+  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_ad, 'departman', coalesce(v_dep,'hepsi'));
 end $$;
 
 -- Admin: kaptan listesi (PIN yok)
@@ -870,22 +875,25 @@ create or replace function public.kaptan_liste(p_sifre text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
-  return coalesce((select jsonb_agg(jsonb_build_object('kod', kod, 'ad', ad, 'aktif', aktif) order by ad)
+  return coalesce((select jsonb_agg(jsonb_build_object('kod', kod, 'ad', ad, 'aktif', aktif, 'departman', departman) order by ad)
     from kaptan), '[]'::jsonb);
 end $$;
 
--- Admin: kaptan ekle/güncelle
-create or replace function public.kaptan_ekle(p_sifre text, p_kod text, p_ad text, p_pin text)
+-- Admin: kaptan ekle/güncelle (departman ile)
+drop function if exists public.kaptan_ekle(text, text, text, text);
+create or replace function public.kaptan_ekle(p_sifre text, p_kod text, p_ad text, p_pin text, p_departman text default 'hepsi')
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_dep text := coalesce(nullif(p_departman,''),'hepsi');
 begin
   if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
   if coalesce(p_kod,'') !~ '^[A-Za-z0-9]{1,10}$' then raise exception 'Kod 1-10 harf/rakam olmali'; end if;
   if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
   if coalesce(p_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
+  if v_dep not in ('bar','mutfak','hepsi') then raise exception 'Gecersiz departman'; end if;
   -- kod küçük harfe normalize edilir (giriş kasadan bağımsız çalışsın)
-  insert into kaptan (kod, ad, pin, aktif)
-  values (lower(p_kod), left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf')), true)
-  on conflict (kod) do update set ad = excluded.ad, pin = excluded.pin, aktif = true;
+  insert into kaptan (kod, ad, pin, aktif, departman)
+  values (lower(p_kod), left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf')), true, v_dep)
+  on conflict (kod) do update set ad = excluded.ad, pin = excluded.pin, aktif = true, departman = excluded.departman;
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -895,6 +903,17 @@ returns jsonb language plpgsql security definer set search_path = public, extens
 begin
   if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
   delete from kaptan where lower(kod) = lower(coalesce(p_kod,''));
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Admin: kaptan departman değiştir
+create or replace function public.kaptan_departman(p_sifre text, p_kod text, p_departman text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if coalesce(p_departman,'') not in ('bar','mutfak','hepsi') then raise exception 'Gecersiz departman'; end if;
+  update kaptan set departman = p_departman where lower(kod) = lower(coalesce(p_kod,''));
+  if not found then raise exception 'Kaptan bulunamadi'; end if;
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -936,8 +955,9 @@ grant execute on function public.siparis_gonder(text, text, jsonb, text, text, t
 grant execute on function public.kaptan_liste_ac()                                    to anon;
 grant execute on function public.kaptan_giris(text, text)                             to anon;
 grant execute on function public.kaptan_liste(text)                                   to anon;
-grant execute on function public.kaptan_ekle(text, text, text, text)                  to anon;
+grant execute on function public.kaptan_ekle(text, text, text, text, text)            to anon;
 grant execute on function public.kaptan_sil(text, text)                               to anon;
+grant execute on function public.kaptan_departman(text, text, text)                   to anon;
 grant execute on function public.kaptan_pin_degistir(text, text, text)                to anon;
 grant execute on function public.kaptan_sifre_degistir(text, text, text)              to anon;
 grant execute on function public.depo_liste(text, date)                               to anon;
