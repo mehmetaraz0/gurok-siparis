@@ -9,7 +9,7 @@
 // Kategori gösterim sırası
 const TUK_KATEGORILER = [
   "Et ve Tavuk", "Balık ve Deniz Ürünleri", "Süt ve Çeşitleri", "Peynirler",
-  "Şoklu Sebze ve Meyve", "Şoklu Unlu Mamuller", "Yoğurt ve Çeşitleri",
+  "Şoklu Sebze ve Meyve", "Şoklu Unlu Mamuller", "Dondurma", "Yoğurt ve Çeşitleri",
   "Yumurta", "Çerez", "Turşu ve Zeytinler", "Makarnalar", "Kek Miksi Çeşitleri",
   "Reçel Dökme", "Kuru Gıda", "Genel Malzeme", "Alkolsüz İçecekler", "Alkollü İçecekler"
 ];
@@ -135,7 +135,7 @@ function tuketimKategori(kod, ad) {
   if (p3 !== "YIY") return null;
 
   // YIY aileleri
-  if (p5 === "YIY04") return null;                 // dondurma hariç
+  if (p5 === "YIY04") return { tab: "Dondurma" };  // dondurma dahil
   if (p5 === "YIY01") return { tab: "Et ve Tavuk" };
   if (p5 === "YIY02") return { tab: "Balık ve Deniz Ürünleri" };
   if (p5 === "YIY03") return { tab: "Peynirler" };
