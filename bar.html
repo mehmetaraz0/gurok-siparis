@@ -215,7 +215,7 @@ async function birimAc(birim) {
   const bulut = await katalogGetir(anahtar());
   if (bulut) C = { ...C, i: bulut };
 
-  GIZLI = await stokGizliYukle();   // stoğu biten ürünleri gizle
+  GIZLI = await stokGizliYukle(KAPTAN);   // stoğu biten ürünleri gizle
   yukle();
   rl();
   us();
@@ -301,7 +301,7 @@ function yukle() {
 
   const taslak = taslakOku(anahtar());
   if (taslak && Object.keys(taslak.q).length) {
-    Q[anahtar()] = taslak.q;
+    Q[anahtar()] = miktarHaritasiTemizle(taslak.q);
     kirli = true;
     durum("hata", "⚠ Gönderilmemiş taslağınız var");
   } else {
@@ -380,7 +380,7 @@ function rl() {
          + '<span class="in">' + htmlEsc(i.a)
          + (i.min ? ' <span class="minlbl">en az ' + i.min + '</span>' : '') + '</span>'
          + '<span class="iu">' + htmlEsc(i.b) + '</span>'
-         + '<span class="iq"><input type="number" min="0" value="' + (q || "") + '"'
+         + '<span class="iq"><input type="number" min="0" value="' + htmlEsc(q || "") + '"'
          + ' class="' + (q ? "fl" : "") + (q && i.min && q < Number(i.min) ? " eksik" : "") + '"'
          + (i.min ? ' title="En az ' + i.min + ' girilmeli"' : "")
          + ' data-k="' + htmlEsc(i.k) + '"'

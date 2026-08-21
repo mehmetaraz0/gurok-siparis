@@ -237,11 +237,20 @@ returns jsonb language sql security definer set search_path = public as $$
    where k.liste = p_liste;
 $$;
 
--- Stoğu 0/negatif olan kodlar (bar/mutfak bunları gizler)
-create or replace function public.stok_gizli_kodlar()
-returns jsonb language sql security definer set search_path = public as $$
-  select coalesce(jsonb_agg(kod), '[]'::jsonb) from stok where miktar <= 0;
-$$;
+-- Stoğu 0/negatif olan kodlar (bar/mutfak bunları gizler).
+-- KİMLİK ŞART: eskiden argümansız ve anon'a açıktı; kimlik doğrulamadan
+-- stok tablosundan "hangi ürünler tükendi" bilgisi dışarı alınabiliyordu.
+-- Artık geçerli + aktif bir kaptan PIN'i ister (kasa farketmez).
+drop function if exists public.stok_gizli_kodlar();
+create or replace function public.stok_gizli_kodlar(p_kaptan_kod text, p_kaptan_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not exists (select 1 from kaptan
+                  where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
+                    and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin))
+  then raise exception 'Kullanici girisi gerekli'; end if;
+  return coalesce((select jsonb_agg(kod) from stok where miktar <= 0), '[]'::jsonb);
+end $$;
 
 -- BAR/MUTFAK → sipariş gönder (SAĞLAMLAŞTIRILMIŞ KÖPRÜ)
 --  • outlet allowlist  • PIN (varsa)  • ad'ı SUNUCU belirler
@@ -268,20 +277,26 @@ declare
   v_tarih date := (now() at time zone 'Europe/Istanbul')::date;
   v_no text; v_saat timestamptz; v_sira int; v_deneme int := 0;
   v_el jsonb; v_m numeric; v_ad text; v_liste text; v_gunluk int;
-  v_gonderen text;
+  v_gonderen text; v_tur text; v_dep text; v_min_hata text;
   v_iid text := nullif(left(coalesce(p_istemci_id, ''), 64), '');
   rec record;
 begin
   -- 1) Outlet gerçek mi + kimlik. TÜM birimler (bar + mutfak) kişi bazlı giriş ister.
   --    ad'ı ve gonderen'i SUNUCU belirler.
-  select ad into v_ad from outletler where kod = p_outlet_kod;
+  select ad, tur into v_ad, v_tur from outletler where kod = p_outlet_kod;
   if v_ad is null then raise exception 'Gecersiz outlet'; end if;
 
   -- Kişi (kaptan/personel) kimliği: geçerli + aktif kaptan PIN'i şart (kasa farketmez).
-  select ad into v_gonderen from kaptan
+  select ad, departman into v_gonderen, v_dep from kaptan
    where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
      and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
   if v_gonderen is null then raise exception 'Kullanici girisi gerekli'; end if;
+
+  -- DEPARTMAN SUNUCUDA ZORLANIR. Client'taki birim filtresi yalnızca kolaylıktır;
+  -- sessionStorage değiştirilerek atlanabilirdi.
+  if coalesce(v_dep,'hepsi') <> 'hepsi' and v_dep <> coalesce(v_tur,'bar') then
+    raise exception 'Bu birime siparis yetkiniz yok';
+  end if;
 
   -- 2) Kalem listesi biçimi
   if jsonb_typeof(p_kalemler) <> 'array' or jsonb_array_length(p_kalemler) = 0 then
@@ -301,6 +316,15 @@ begin
     v_m := (v_el->>'m')::numeric;
     if v_m <= 0 or v_m > 100000 then raise exception 'Miktar araligi disinda'; end if;
   end loop;
+
+  -- 3b) MİNİMUM SİPARİŞ MİKTARI sunucuda da zorlanır (client kontrolü atlanabilir).
+  select string_agg(el->>'a' || ' (en az ' || um.min_miktar || ')', ', ') into v_min_hata
+    from jsonb_array_elements(p_kalemler) el
+    join urun_min um on um.kod = el->>'k'
+   where um.min_miktar is not null and (el->>'m')::numeric < um.min_miktar;
+  if v_min_hata is not null then
+    raise exception 'Minimum siparis miktarinin altinda: %', v_min_hata;
+  end if;
 
   -- 4) Kalem kodları o listenin katalogunda olmalı (liste seed'liyse zorlanır;
   --    değilse gömülü listeyle çalışan bara izin verilir).
@@ -957,7 +981,7 @@ revoke all on all functions in schema public from public;
 -- (Fonksiyon duruyor ama disaridan cagrilamaz; anon icin PIN deneme/outlet adi sizintisi kapandi.)
 revoke execute on function public.outlet_giris(text, text) from anon;
 grant execute on function public.katalog_getir(text)                                  to anon;
-grant execute on function public.stok_gizli_kodlar()                                  to anon;
+grant execute on function public.stok_gizli_kodlar(text, text)                        to anon;
 grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text, text) to anon;
 grant execute on function public.kaptan_giris(text, text)                             to anon;
 grant execute on function public.kaptan_liste(text)                                   to anon;

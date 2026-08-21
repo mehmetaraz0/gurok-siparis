@@ -839,7 +839,7 @@ function cizTuketim() {
          + '<td style="text-align:center">' + htmlEsc(u.birim) + '</td>'
          + '<td class="say tuk-mik">' + u.tuketim + '</td>'
          + '<td class="say">' + (u.kalan != null ? (Number.isInteger(u.kalan) ? u.kalan : u.kalan.toFixed(2)) : "—") + '</td>'
-         + '<td class="say"><input class="tuk-sip" type="number" min="0" step="1" value="' + sip + '"'
+         + '<td class="say"><input class="tuk-sip" type="number" min="0" step="1" value="' + htmlEsc(sip) + '"'
          + ' data-k="' + htmlEsc(u.kod) + '" onchange="tukSipKaydet(this)" onfocus="this.select()"></td>'
          + '</tr>';
     });
@@ -860,7 +860,8 @@ function tukSiparisYukle(bas, bit) {
   const aralik = bas + "→" + bit;
   try {
     const kayit = JSON.parse(localStorage.getItem("gurok_tuk_siparis") || "null");
-    TUK_SIPARIS = (kayit && kayit.aralik === aralik && kayit.q) ? kayit.q : {};
+    TUK_SIPARIS = (kayit && kayit.aralik === aralik)
+      ? miktarHaritasiTemizle(kayit.q) : {};
   } catch (e) { TUK_SIPARIS = {}; }
   TUK_SIP_ARALIK = aralik;
 }

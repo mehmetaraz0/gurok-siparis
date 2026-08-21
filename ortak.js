@@ -143,9 +143,11 @@ function kumParse(satirlar) {
 
 // Bar/mutfak: stoğu 0/negatif olan kod kümesi. Stok modülü yoksa boş küme
 // döner (hiçbir ürün gizlenmez), böylece sistem eskisi gibi çalışmaya devam eder.
-async function stokGizliYukle() {
+async function stokGizliYukle(kaptan) {
+  if (!kaptan || !kaptan.kod || !kaptan.pin) return new Set();   // kimlik yoksa sorgulama
   try {
-    const { data, error } = await SB.rpc("stok_gizli_kodlar");
+    const { data, error } = await SB.rpc("stok_gizli_kodlar",
+      { p_kaptan_kod: kaptan.kod, p_kaptan_pin: kaptan.pin });
     if (error) throw error;
     return new Set(data || []);
   } catch (e) {
@@ -154,6 +156,21 @@ async function stokGizliYukle() {
   }
 }
 
+
+/* Tarayıcı deposundan (localStorage/sessionStorage) gelen "kod -> miktar" haritasını
+   TEMİZLER. Depo kullanıcı tarafından değiştirilebilir; oradan gelen değer doğrudan
+   HTML attribute'una yazılırsa (value="...") attribute enjeksiyonuna açık olur.
+   Yalnızca geçerli kalem kodu + pozitif tam sayı geçer. */
+function miktarHaritasiTemizle(obj) {
+  const temiz = {};
+  if (!obj || typeof obj !== "object") return temiz;
+  for (const k of Object.keys(obj)) {
+    if (!/^[A-Z]{3}[0-9]{8}$/.test(k)) continue;          // kod deseni
+    const v = Number(obj[k]);
+    if (Number.isInteger(v) && v > 0 && v <= 100000) temiz[k] = v;
+  }
+  return temiz;
+}
 /* ---------- Onaylanan miktar ---------- */
 
 // Bir kalemin Excel'e girecek miktarı.
