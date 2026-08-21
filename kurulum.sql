@@ -246,16 +246,36 @@ begin
     'pinli', v_var > 0, 'gonderen', v_gonderen);
 end $$;
 
--- Bir listenin ürünleri (min + minstok ile)
-create or replace function public.katalog_getir(p_liste text)
-returns jsonb language sql security definer set search_path = public as $$
-  select coalesce(jsonb_agg(
+-- Bir listenin ürünleri (min + minstok ile).
+-- KİMLİK ŞART: geçerli kaptan PIN'i VEYA admin şifresi. Eskiden argümanı olan ama
+-- kimlik istemeyen bir fonksiyondu; anon key ile tüm ürün katalogu (kod, ad, birim,
+-- min sipariş/min stok) dışarı alınabiliyordu.
+drop function if exists public.katalog_getir(text);
+create or replace function public.katalog_getir(
+  p_liste      text,
+  p_kaptan_kod text default null,
+  p_kaptan_pin text default null,
+  p_sifre      text default null)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not exists (select 1 from kaptan
+                  where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
+                    and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin))
+     and not (coalesce(p_sifre,'') <> '' and admin_dogru(p_sifre))
+  then
+    if kaptan_kilitli(p_kaptan_kod) then
+      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
+    end if;
+    raise exception 'Yetki gerekli';
+  end if;
+
+  return coalesce((select jsonb_agg(
            jsonb_build_object('k', k.kod, 'a', k.ad, 'b', k.birim, 'g', k.grup,
                               'sira', k.sira, 'min', m.min_miktar, 'minstok', m.min_stok)
-           order by k.sira), '[]'::jsonb)
+           order by k.sira)
     from katalog k left join urun_min m on m.kod = k.kod
-   where k.liste = p_liste;
-$$;
+   where k.liste = p_liste), '[]'::jsonb);
+end $$;
 
 -- Stoğu 0/negatif olan kodlar (bar/mutfak bunları gizler).
 -- KİMLİK ŞART: eskiden argümansız ve anon'a açıktı; kimlik doğrulamadan
@@ -1033,7 +1053,7 @@ revoke all on all functions in schema public from public;
 -- outlet_giris ARTIK ANON'A ACIK DEGIL: kimlik kaptan modeline gecti, client cagirmiyor.
 -- (Fonksiyon duruyor ama disaridan cagrilamaz; anon icin PIN deneme/outlet adi sizintisi kapandi.)
 revoke execute on function public.outlet_giris(text, text) from anon;
-grant execute on function public.katalog_getir(text)                                  to anon;
+grant execute on function public.katalog_getir(text, text, text, text)              to anon;
 grant execute on function public.stok_gizli_kodlar(text, text)                        to anon;
 grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text, text) to anon;
 grant execute on function public.kaptan_giris(text, text)                             to anon;

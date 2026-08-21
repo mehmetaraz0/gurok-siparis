@@ -218,7 +218,7 @@ async function birimAc(birim) {
   document.getElementById("lp").innerHTML = '<div class="em">Yükleniyor...</div>';
 
   // Listeyi buluttan çek; bulut boş/erişilemezse gömülü liste kullanılır.
-  const bulut = await katalogGetir(anahtar());
+  const bulut = await katalogGetir(anahtar(), KAPTAN);
   if (bulut) C = { ...C, i: bulut };
 
   GIZLI = await stokGizliYukle(KAPTAN);   // stoğu biten ürünleri gizle

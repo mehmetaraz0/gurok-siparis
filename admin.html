@@ -141,7 +141,11 @@ async function listeYukle() {
   document.getElementById("listeBaslik").textContent = document.getElementById("listeSec").selectedOptions[0].textContent;
   kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
   try {
-    const { data, error } = await SB.rpc("katalog_getir", { p_liste: LISTE });
+    // Yeni imza kimlik ister; SQL henüz uygulanmadıysa eski tek-argümanlı çağrıya düş.
+    let { data, error } = await SB.rpc("katalog_getir", { p_liste: LISTE, p_sifre: SIFRE });
+    if (error && /does not exist|Could not find/i.test(error.message || "")) {
+      ({ data, error } = await SB.rpc("katalog_getir", { p_liste: LISTE }));
+    }
     if (error) throw error;
     KALEMLER = data || [];
     cizListe();

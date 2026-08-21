@@ -62,10 +62,19 @@ function listeKimlik(kod, bolum) {
 }
 
 // Bir listenin ürünlerini buluttan çeker. Bulut boşsa/ulaşılamazsa null döner
-// ve çağıran gömülü (veri.js/mutfak.js) listeye düşer.
-async function katalogGetir(liste) {
+// Bulut katalogu. Kimlik ŞART (kaptan PIN'i ya da admin şifresi).
+// kimlik = {kod, pin} (kaptan) veya {sifre} (admin).
+// SQL henüz uygulanmamış veritabanlarında yeni imza bulunamaz; o durumda eski
+// tek-argümanlı çağrıya düşülür (geçiş penceresi; SQL uygulanınca bu dal ölür).
+async function katalogGetir(liste, kimlik) {
+  const arg = { p_liste: liste };
+  if (kimlik && kimlik.kod && kimlik.pin) { arg.p_kaptan_kod = kimlik.kod; arg.p_kaptan_pin = kimlik.pin; }
+  if (kimlik && kimlik.sifre) arg.p_sifre = kimlik.sifre;
   try {
-    const { data, error } = await SB.rpc("katalog_getir", { p_liste: liste });
+    let { data, error } = await SB.rpc("katalog_getir", arg);
+    if (error && /does not exist|Could not find/i.test(error.message || "")) {
+      ({ data, error } = await SB.rpc("katalog_getir", { p_liste: liste }));   // eski imza
+    }
     if (error) throw error;
     return (Array.isArray(data) && data.length) ? data : null;
   } catch (e) {
