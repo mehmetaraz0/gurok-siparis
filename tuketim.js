@@ -34,38 +34,53 @@ const KEK_MIKSI_KODLARI = new Set([
 
 /* ---------- Alt grup sınıflandırıcıları ---------- */
 
-// Kuru Gıda alt grubu — skill 14.1..14.9 ÖNCELİK SIRASI, ilk eşleşen kazanır.
-// Hiçbirine uymayan YIY07/08/09/10/11/12 kalemi HARİÇ tutulur → null döner.
+// Kuru Gıda alt grubu — skill 14.1..14.9.
+// ÖNEMLİ: her alt grup kendi ÜRÜN AİLESİNE (kod öneki) bağlıdır. Aksi halde
+// erken bir anahtar kelime başka ailenin ürününü kapar (ör. "FISTIK ICI TUZLU"
+// içindeki TUZ → Baharatlar, "LOKUM KAKAOLU" → Çikolatalar). Aile içinde
+// eşleşme olmazsa ürün RAPORDAN DÜŞMEZ; ailenin varsayılan grubuna gider.
+//   YIY07 → Un/Hamur   YIY08 → Kuruyemiş   YIY09 → Dolgu/Krema
+//   YIY10 → Şeker      YIY11 → Konserve    YIY12 → Sos
 // a = ürün adı (BÜYÜK harf).
 function _kuruGidaAlt(kod, a) {
-  // 14.1 UN VE HAMUR MALZEMELERI
-  if (/^UN$|^UN |NISASTA|KABARTMA TOZU|KARBONAT|OVALEKS|VANILIN|YASMAYA|ALACA CORBA|ALACA ÇORBA|TARHANA|SUSAM|^SIMIT/.test(a))
-    return "UN VE HAMUR MALZEMELERİ";
-  // 14.2 BAKLIYAT VE PIRINC
-  if (/FASULYE|NOHUT|MERCIMEK|BULGUR|PIRINC|PİRİNÇ|BUGDAY ASURE|YULAF|BORULCE|BARBUNYA|KARA BUGDAY|KINOA/.test(a))
-    return "BAKLIYAT VE PİRİNÇ";
-  // 14.3 KONSERVELER VE YAGLAR
-  if (/\bYAG\b|\bYAĞ\b|TEREYAG|TEREYAĞ|MARGARIN|KONSERVE|SALCA|SALÇA|MANTAR SALAMURA|KETCAP|KETÇAP|KAPARI|ENGINAR KALBI|SOYA FILIZI|PATLICAN KOZLENMIS|ZEYTIN SIZMA/.test(a))
-    return "KONSERVELER VE YAĞLAR";
-  // 14.4 BAHARATLAR
-  if (/TUZ|BIBER|KIMYON|TARCIN|TARÇIN|KEKIK|KEKİK|BAHARAT|YENI BAHAR|YENIBAHAR|SAFRAN|NANE|PUL BIBER|KARABIBER|KIRMIZI BIBER|ISOT|SUMAK|ZENCEFIL|MUSKAT|KORI|HASHAS|COREK OTU|KISNIS|DEFNE|ZERDECAL|ZERDEÇAL/.test(a))
-    return "BAHARATLAR";
-  // 14.5 SOS VE SIRKE
-  if (/MAYONEZ|HARDAL|\bSOS\b|SIRKE|BULYON|ACISSO|LIMON SUYU|NAR EKSISI|NAR EKŞİSİ|PATATES PURE|CESNI|ÇEŞNI|SOYA SOS|TERIYAKI|SALSA|ARRABIATA/.test(a))
-    return "SOS VE SİRKE";
-  // 14.6 CIKOLATALAR VE DROP
-  if (/DROP|CIKOLATA|ÇIKOLATA|KAKAO|PRALIN|GANAJ|DAMLA SAKIZI|KUVERTUR/.test(a))
-    return "ÇİKOLATALAR VE DROP";
-  // 14.7 DOLGU VE KREMALAR
-  if (/DOLGU|JOLE|JÖLE|FOND|KREMA|KREM KARAMEL|KREM BRULE|GIDA BOYASI|TARTALET|PANKEK|MELLA|SANTI|TIRAMISU|PASTA KURU|PASTA RESIM|ALGIDA KORNET|PANNA COTTA|AGAR|JELATIN|SABLE|KADIFE BOYA|KULAH|KÜLAH/.test(a))
-    return "DOLGU VE KREMALAR";
-  // 14.8 KURUYEMIS VE BISKUVI
-  if (/FINDIK|BADEM|CEVIZ|FISTIK|GEVREK|BISKUVI|BİSKÜVİ|GOFRET|LOTUS|KAYISI KURU|KAYISI GUN|UZUM KURU|HURMA|INCIR KURU|YABAN MERSINI|HINDISTAN CEVIZI|LEBLEBI|AYCEKIRDEK|KUS UZUMU|CEREZ|ÇEREZ|KRAKER|MAMASI HERO|BEBEK MAMASI|ERIK KURU|CIPS|MISIR GEVREGI|ETIMEK|DUT KURUSU|KETEN/.test(a))
-    return "KURUYEMİŞ VE BİSKÜVİ";
-  // 14.9 SEKER VE TATLI MALZEMELERI
-  if (/SEKER|ŞEKER|\bBAL\b|HELVA|TATLI|LOKUM|BAKLAVA|KOMPOSTO|TAHIN|PEKMEZ|KADAYIF|GULLAC|GÜLLAÇ|MARMELAT|IRMIK|GLIKOZ|HARIBO|PEYNIR TATLISI|KIRAZ SEKERI/.test(a))
-    return "ŞEKER VE TATLI MALZEMELERİ";
-  return null; // hiçbirine uymadı → HARİÇ
+  const p5 = kod.slice(0, 5);
+
+  // --- 14.1 / 14.2 : un-hamur ve bakliyat (YIY07 ve YIY08 aileleri) ---
+  if (p5 === "YIY07" || p5 === "YIY08") {
+    if (/^UN$|^UN |NISASTA|KABARTMA TOZU|KARBONAT|OVALEKS|VANILIN|YAS MAYA|\bMAYA\b|ALACA CORBA|ALACA ÇORBA|TARHANA|SUSAM SIMITLIK|^SIMIT/.test(a))
+      return "UN VE HAMUR MALZEMELERİ";
+    if (/FASULYE|NOHUT|MERCIMEK|BULGUR|PIRIN|BUGDAY ASURE|YULAF|BORULCE|BARBUNYA|KARA BUGDAY|KINOA/.test(a))
+      return "BAKLIYAT VE PİRİNÇ";
+  }
+  if (p5 === "YIY07") return "UN VE HAMUR MALZEMELERİ";           // varsayılan
+
+  // --- 14.8 : kuruyemiş / bisküvi (YIY08) ---
+  if (p5 === "YIY08") return "KURUYEMİŞ VE BİSKÜVİ";              // varsayılan
+
+  // --- 14.6 / 14.7 : çikolata ve dolgu (YIY09) ---
+  if (p5 === "YIY09") {
+    if (/DROP|CIKOLATA|ÇIKOLATA|KAKAO|PRALIN|GANAJ|DAMLA SAKIZI|KUVERTUR/.test(a))
+      return "ÇİKOLATALAR VE DROP";
+    return "DOLGU VE KREMALAR";                                    // varsayılan
+  }
+
+  // --- 14.9 : şeker ve tatlı (YIY10) ---
+  if (p5 === "YIY10") return "ŞEKER VE TATLI MALZEMELERİ";        // varsayılan
+
+  // --- 14.3 / 14.4 / 14.5 : konserve-yağ, baharat, sos (YIY11 / YIY12) ---
+  if (p5 === "YIY12") return "SOS VE SİRKE";
+  if (p5 === "YIY11") {
+    if (/YAĞ|\bYAG\b|TEREYAG|TEREYAĞ|MARGARIN|KONSERVE|SALCA|SALÇA|MANTAR SALAMURA|KETCAP|KETÇAP|KAPARI|ENGINAR KALBI|SOYA FILIZI|PATLICAN KOZLENMIS|ZEYTIN SIZMA/.test(a))
+      return "KONSERVELER VE YAĞLAR";
+    if (/TUZ|BIBER|KIMYON|TARCIN|TARÇIN|KEKIK|KEKİK|BAHARAT|YENI BAHAR|SAFRAN|NANE|KARABIBER|ISOT|SUMAK|ZENCEFIL|MUSKAT|KORI|HASHAS|COREK OTU|KISNIS|DEFNE|ZERDECAL|ZERDEÇAL|KETEN/.test(a))
+      return "BAHARATLAR";
+    if (/MAYONEZ|HARDAL|\bSOS\b|SIRKE|BULYON|ACISSO|LIMON SUYU|NAR EKSISI|NAR EKŞİSİ|PATATES PURE|CESNI|ÇEŞNI|SOYA SOS|TERIYAKI|SALSA|ARRABIATA/.test(a))
+      return "SOS VE SİRKE";
+    return "KONSERVELER VE YAĞLAR";                                // varsayılan
+  }
+
+  // Bilinmeyen YIY ailesi: rapordan düşmesin, kuruyemiş bloğunda toplansın.
+  return "KURUYEMİŞ VE BİSKÜVİ";
 }
 
 function _genelAlt(kod, a) {
@@ -104,10 +119,10 @@ function _alkolluAlt(kod, a) {
   return "LİKÖRLER";
 }
 
-// Kuru Gıda'ya yönlendir; alt grup yoksa (hiçbir 14.x kuralına uymuyorsa) HARİÇ tut.
+// Kuru Gıda'ya yönlendir. _kuruGidaAlt her zaman bir alt grup döndürür
+// (aile varsayılanı), böylece hiçbir ürün sessizce rapordan düşmez.
 function _kuruGida(kod, a) {
-  const alt = _kuruGidaAlt(kod, a);
-  return alt ? { tab: "Kuru Gıda", alt } : null;
+  return { tab: "Kuru Gıda", alt: _kuruGidaAlt(kod, a) };
 }
 
 /* ---------- Ana kategorilendirme ---------- */
@@ -153,7 +168,7 @@ function tuketimKategori(kod, ad) {
 
   if (p5 === "YIY07") {
     // Kural 6: yalnızca unlu mamul anahtar kelimeleri Şoklu Unlu'ya girer.
-    if (/SOKLU|ŞOKLU|KRUVASAN|BOREK|BÖREK|POGACA|POĞAÇA|ICLI KOFTE|İÇLİ KÖFTE|DONUT|GUL BOREGI|KALEM BOREGI|CHURROS|KURABIYE|MANTI|MANTİ/.test(a))
+    if (/SOKLU|ŞOKLU|KRUVASAN|BOREK|BÖREK|POGACA|POĞAÇA|KOFTE|KÖFTE|DONUT|GUL BOREGI|KALEM BOREGI|CHURROS|KURABIYE|MANTI|MANTİ/.test(a))
       return { tab: "Şoklu Unlu Mamuller" };
     // Bitmiş/pişmiş ekmekler HARİÇ (hamur/un malzemesi değil — "UN EKMEKLIK" hariç kalır, 14.1'e gider)
     if (/^EKMEK\b|TORTILLA EKMEK|TOST EKMEK/.test(a)) return null;

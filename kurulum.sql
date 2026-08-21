@@ -89,6 +89,10 @@ create table if not exists public.kaptan (
 alter table public.kaptan add column if not exists departman text not null default 'hepsi';
 alter table public.kaptan drop constraint if exists kaptan_departman_chk;
 alter table public.kaptan add constraint kaptan_departman_chk check (departman in ('bar','mutfak','hepsi'));
+-- Girişte hep lower(kod) eşleştiği için kod da küçük harfe sabitlenir. Aksi halde
+-- 'Maraz' + 'maraz' iki ayrı satır olur, giriş hangisine düşeceği belirsizleşir.
+update public.kaptan set kod = lower(kod) where kod <> lower(kod);
+create unique index if not exists kaptan_kod_lower_idx on public.kaptan (lower(kod));
 
 create table if not exists public.stok (
   kod        text primary key,
@@ -145,11 +149,11 @@ revoke all on public.kaptan     from anon, authenticated;
 
 -- ================= ŞİFRELER (mevcut olan KORUNUR) =================
 insert into public.ayarlar (anahtar, deger)
-values ('depo_sifre', extensions.crypt('BURAYA_DEPO_SIFRE', extensions.gen_salt('bf')))
+values ('depo_sifre', extensions.crypt('BURAYA_DEPO_SIFRE', extensions.gen_salt('bf', 10)))
 on conflict (anahtar) do nothing;
 
 insert into public.ayarlar (anahtar, deger)
-values ('admin_sifre', extensions.crypt('BURAYA_ADMIN_SIFRE', extensions.gen_salt('bf')))
+values ('admin_sifre', extensions.crypt('BURAYA_ADMIN_SIFRE', extensions.gen_salt('bf', 10)))
 on conflict (anahtar) do nothing;
 
 -- ================= OUTLET TOHUMU (PIN'ler KORUNUR) =================
@@ -176,6 +180,9 @@ insert into public.outletler (kod, ad, tur) values
   ('CSM316', 'LOBBY BAR', 'bar'),
   ('CSM317', 'PARK TURK KAHVESI', 'bar'),
   ('CSM318', 'SARAP VE BIRA EVI', 'bar'),
+  ('CSM401', 'RESEPSIYON CAY OCAGI', 'bar'),
+  ('CSM402', 'PARK RESEPSIYON CAY OCAGI', 'bar'),
+  ('CSM403', 'IDARI BINA CAY OCAGI', 'bar'),
   ('CMM201', 'ANAMUTFAK', 'mutfak'),
   ('CMM204', 'PARK MUTFAK', 'mutfak'),
   ('CMM202', 'AQUA MUTFAK', 'mutfak')
@@ -261,7 +268,7 @@ declare
   v_tarih date := (now() at time zone 'Europe/Istanbul')::date;
   v_no text; v_saat timestamptz; v_sira int; v_deneme int := 0;
   v_el jsonb; v_m numeric; v_ad text; v_liste text; v_gunluk int;
-  v_pinvar int; v_gonderen text; v_tur text;
+  v_gonderen text;
   v_iid text := nullif(left(coalesce(p_istemci_id, ''), 64), '');
   rec record;
 begin
@@ -836,7 +843,7 @@ begin
   select count(*) into v_adet from outlet_pin where outlet_kod = p_kod;
   if v_adet >= 10 then raise exception 'Bu outlet icin en fazla 10 PIN'; end if;
   insert into outlet_pin (outlet_kod, etiket, pin)
-  values (p_kod, left(p_etiket,40), extensions.crypt(p_pin, extensions.gen_salt('bf')))
+  values (p_kod, left(p_etiket,40), extensions.crypt(p_pin, extensions.gen_salt('bf', 10)))
   on conflict (outlet_kod, etiket) do update set pin = excluded.pin;
   return jsonb_build_object('ok', true);
 end $$;
@@ -851,12 +858,9 @@ begin
 end $$;
 
 -- ===== KAPTAN =====
--- Giriş ekranı için aktif kaptan adları (şifresiz; PIN dönmez)
-create or replace function public.kaptan_liste_ac()
-returns jsonb language sql security definer set search_path = public as $$
-  select coalesce(jsonb_agg(jsonb_build_object('kod', kod, 'ad', ad) order by ad), '[]'::jsonb)
-    from kaptan where aktif;
-$$;
+-- NOT: kaptan_liste_ac KALDIRILDI. Giriş isim listesinden kullanıcı adı+PIN'e geçince
+-- tüketicisi kalmadı ve personel ad listesini anon'a açıyordu (PII sızıntısı).
+drop function if exists public.kaptan_liste_ac();
 
 -- Kaptan girişi: kod (BÜYÜK/küçük harf fark etmez) + PIN doğrula
 create or replace function public.kaptan_giris(p_kod text, p_pin text)
@@ -892,7 +896,7 @@ begin
   if v_dep not in ('bar','mutfak','hepsi') then raise exception 'Gecersiz departman'; end if;
   -- kod küçük harfe normalize edilir (giriş kasadan bağımsız çalışsın)
   insert into kaptan (kod, ad, pin, aktif, departman)
-  values (lower(p_kod), left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf')), true, v_dep)
+  values (lower(p_kod), left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf', 10)), true, v_dep)
   on conflict (kod) do update set ad = excluded.ad, pin = excluded.pin, aktif = true, departman = excluded.departman;
   return jsonb_build_object('ok', true);
 end $$;
@@ -903,6 +907,7 @@ returns jsonb language plpgsql security definer set search_path = public, extens
 begin
   if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
   delete from kaptan where lower(kod) = lower(coalesce(p_kod,''));
+  if not found then raise exception 'Kaptan bulunamadi'; end if;
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -923,7 +928,7 @@ returns jsonb language plpgsql security definer set search_path = public, extens
 begin
   if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
   if coalesce(p_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
-  update kaptan set pin = extensions.crypt(p_pin, extensions.gen_salt('bf'))
+  update kaptan set pin = extensions.crypt(p_pin, extensions.gen_salt('bf', 10))
    where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kaptan bulunamadi'; end if;
   return jsonb_build_object('ok', true);
@@ -939,7 +944,7 @@ begin
    where lower(kod) = lower(coalesce(p_kod,'')) and aktif
      and pin = extensions.crypt(coalesce(p_eski_pin,''), pin);
   if v_var is null then raise exception 'Eski PIN hatali'; end if;
-  update kaptan set pin = extensions.crypt(p_yeni_pin, extensions.gen_salt('bf'))
+  update kaptan set pin = extensions.crypt(p_yeni_pin, extensions.gen_salt('bf', 10))
    where lower(kod) = lower(coalesce(p_kod,''));
   return jsonb_build_object('ok', true);
 end $$;
@@ -948,11 +953,12 @@ end $$;
 -- ================= İZİNLER (anon yalnızca fonksiyonları çağırır) =================
 revoke all on all functions in schema public from public;
 
-grant execute on function public.outlet_giris(text, text)                             to anon;
+-- outlet_giris ARTIK ANON'A ACIK DEGIL: kimlik kaptan modeline gecti, client cagirmiyor.
+-- (Fonksiyon duruyor ama disaridan cagrilamaz; anon icin PIN deneme/outlet adi sizintisi kapandi.)
+revoke execute on function public.outlet_giris(text, text) from anon;
 grant execute on function public.katalog_getir(text)                                  to anon;
 grant execute on function public.stok_gizli_kodlar()                                  to anon;
 grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text, text) to anon;
-grant execute on function public.kaptan_liste_ac()                                    to anon;
 grant execute on function public.kaptan_giris(text, text)                             to anon;
 grant execute on function public.kaptan_liste(text)                                   to anon;
 grant execute on function public.kaptan_ekle(text, text, text, text, text)            to anon;

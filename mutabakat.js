@@ -1,5 +1,11 @@
 // mutabakat.js — LN entegrasyonu saf mantık (tarayıcı + Node/vm ile test edilir)
 
+// LN sayı biçimi: tam sayı "5.0", ondalık "2.5" (eskiden "2.5.0" üretip XML'i bozuyordu)
+function tdpurMiktar(v) {
+  const n = Number(v);
+  return Number.isInteger(n) ? n + ".0" : String(n);
+}
+
 // LN tdpur (depo talep) çıktısı — SABİT ŞABLON.
 // 1. satır (başlık) ve 2. satırdaki tüm sabit alanlar (talep eden, depo, tarih, vb.)
 // olduğu gibi korunur; her ürün için 2. satır kopyalanıp YALNIZCA şu kolonlar değişir:
@@ -29,7 +35,7 @@ async function buildDepoSiparisBlob(kalemler) {
     hucre("T", '<c r="T' + rn + '" t="n" s="15"><v>' + ((i + 1) * 10) + '</v></c>');
     hucre("V", '<c r="V' + rn + '" t="inlineStr"><is><t>' + xmlEsc(it.k) + '</t></is></c>');
     hucre("W", '<c r="W' + rn + '" t="inlineStr"><is><t>' + xmlEsc(it.a) + '</t></is></c>');
-    hucre("X", '<c r="X' + rn + '" t="n"><v>' + it.m + '.0</v></c>');
+    hucre("X", '<c r="X' + rn + '" t="n"><v>' + tdpurMiktar(it.m) + '</v></c>');
     hucre("Y", '<c r="Y' + rn + '" t="inlineStr"><is><t>' + xmlEsc(it.b) + '</t></is></c>');
 
     newRows += row + "\n";

@@ -777,6 +777,7 @@ async function tuketimGetir() {
     });
 
     TUKETIM = { kategoriler };
+    tukSiparisYukle(bas, bit);   // bu aralığa ait sipariş girişleri
     TUK_ORDERS = orders;                 // outlet çıkış Excel'i ham siparişleri kullanır
     cikisOutletDoldur(orders);
     document.getElementById("tukHazir").textContent =
@@ -818,7 +819,9 @@ function cizTuketim() {
         + '<span><span class="depo-count">' + Object.values(kat).reduce((n,l)=>n+l.length,0) + ' ürün</span>'
         + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:8px" onclick="tukKategoriExcel()">⬇ Excel indir</button>'
         + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(false)">📋 Depo Talep (LN)</button>'
-        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(true)">📋 Tümü (LN)</button></span></div>'
+        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(true)">📋 Tümü (LN)</button>'
+        + ' <button class="cb" style="font-size:12px;padding:7px 14px;margin-left:6px;width:auto;display:inline-block" onclick="tukSiparisTemizle()">🧹 Siparişleri temizle</button>'
+        + ' <span id="tukSipSayac" style="font-size:12px;color:#c00000;margin-left:8px"></span></span></div>'
         + '<table class="tuk-tbl"><thead><tr><th>KOD</th><th>ÜRÜN ADI</th><th>BR</th>'
         + '<th>TÜKETİM</th><th>KALAN STOK</th><th>SİPARİŞ</th></tr></thead><tbody>';
 
@@ -836,23 +839,60 @@ function cizTuketim() {
          + '<td style="text-align:center">' + htmlEsc(u.birim) + '</td>'
          + '<td class="say tuk-mik">' + u.tuketim + '</td>'
          + '<td class="say">' + (u.kalan != null ? (Number.isInteger(u.kalan) ? u.kalan : u.kalan.toFixed(2)) : "—") + '</td>'
-         + '<td class="say"><input class="tuk-sip" type="number" min="0" value="' + sip + '"'
+         + '<td class="say"><input class="tuk-sip" type="number" min="0" step="1" value="' + sip + '"'
          + ' data-k="' + htmlEsc(u.kod) + '" onchange="tukSipKaydet(this)" onfocus="this.select()"></td>'
          + '</tr>';
     });
   });
   kutu.innerHTML = h + '</tbody></table>';
   tukFiltre(document.getElementById("tukAra").value);
+  tukSipSayacGuncelle();
 }
 
 // Sipariş miktarları (kod -> miktar), oturum boyunca saklanır
-const TUK_SIPARIS = (() => {
-  try { return JSON.parse(localStorage.getItem("gurok_tuk_siparis") || "{}"); } catch (e) { return {}; }
-})();
+/* Girilen sipariş miktarları — TARİH ARALIĞINA BAĞLI saklanır.
+   Aksi halde geçen haftanın miktarları bu haftanın ekranında hazır görünür ve
+   "Tümü (LN)" ile farkında olmadan gerçek bir depo talebine dönüşebilir. */
+let TUK_SIPARIS = {};
+let TUK_SIP_ARALIK = "";
+
+function tukSiparisYukle(bas, bit) {
+  const aralik = bas + "→" + bit;
+  try {
+    const kayit = JSON.parse(localStorage.getItem("gurok_tuk_siparis") || "null");
+    TUK_SIPARIS = (kayit && kayit.aralik === aralik && kayit.q) ? kayit.q : {};
+  } catch (e) { TUK_SIPARIS = {}; }
+  TUK_SIP_ARALIK = aralik;
+}
+
+function tukSiparisYaz() {
+  try {
+    localStorage.setItem("gurok_tuk_siparis",
+      JSON.stringify({ aralik: TUK_SIP_ARALIK, q: TUK_SIPARIS }));
+  } catch (e) {}
+}
+
 function tukSipKaydet(inp) {
   const k = inp.dataset.k, v = parseInt(inp.value) || 0;
   if (v > 0) TUK_SIPARIS[k] = v; else delete TUK_SIPARIS[k];
-  try { localStorage.setItem("gurok_tuk_siparis", JSON.stringify(TUK_SIPARIS)); } catch (e) {}
+  tukSiparisYaz();
+  tukSipSayacGuncelle();
+}
+
+// Girilen kalem sayısını LN butonlarında göster (kaç kalem gönderileceği görünsün)
+function tukSipSayacGuncelle() {
+  const n = Object.keys(TUK_SIPARIS).length;
+  const et = document.getElementById("tukSipSayac");
+  if (et) et.textContent = n ? n + " kalem girildi" : "";
+}
+
+function tukSiparisTemizle() {
+  const n = Object.keys(TUK_SIPARIS).length;
+  if (!n) { alert("Girilmiş sipariş yok."); return; }
+  if (!confirm(n + " üründe girilen sipariş miktarı silinecek. Devam edilsin mi?")) return;
+  TUK_SIPARIS = {};
+  tukSiparisYaz();
+  cizTuketim();
 }
 
 // Seçili kategorinin SİPARİŞ ÖZETİ Excel'i:

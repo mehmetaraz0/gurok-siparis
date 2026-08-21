@@ -343,8 +343,8 @@ async function pinYonetimiAc() {
          + '<td>' + (o.pin_sayisi > 0
               ? '<span class="rz onay">🔒 ' + o.pin_sayisi + ' PIN</span>'
               : '<span class="rz talep">açık</span>') + '</td>'
-         + '<td><button class="cb" style="width:auto;margin:0;padding:6px 12px" onclick="outletPinYonet(\''
-              + htmlEsc(o.kod) + '\',\'' + htmlEsc(o.ad).replace(/'/g, "\\'") + '\')">🔧 PIN\'ler</button></td>'
+         + '<td><button class="cb" style="width:auto;margin:0;padding:6px 12px"'
+              + ' data-act="pin" data-kod="' + htmlEsc(o.kod) + '" data-ad="' + htmlEsc(o.ad) + '">🔧 PIN\'ler</button></td>'
          + '</tr>';
     });
     kutu.innerHTML = h + '</tbody></table>';
@@ -413,7 +413,7 @@ async function kaptanListele() {
     document.getElementById("kaptanCount").textContent = list.length + " kaptan";
     const depSel = (kod, d) => {
       const o = (v, t) => '<option value="' + v + '"' + (d === v ? ' selected' : '') + '>' + t + '</option>';
-      return '<select onchange="kaptanDepDegistir(\'' + htmlEsc(kod) + '\', this.value)">' +
+      return '<select data-act="kdep" data-kod="' + htmlEsc(kod) + '">' +
         o("bar","Bar") + o("mutfak","Mutfak") + o("hepsi","Hepsi") + '</select>';
     };
     kutu.innerHTML = list.length
@@ -421,10 +421,10 @@ async function kaptanListele() {
         list.map(k => '<tr><td><b>' + htmlEsc(k.kod) + '</b></td><td>' + htmlEsc(k.ad) + '</td>' +
           '<td>' + depSel(k.kod, k.departman || "hepsi") + '</td>' +
           '<td style="white-space:nowrap">' +
-          '<button class="cb" style="width:auto;margin:0 6px 0 0;padding:6px 12px" onclick="kaptanSifre(\'' +
-          htmlEsc(k.kod) + '\')">🔑 Şifre</button>' +
-          '<button class="cb" style="width:auto;margin:0;padding:6px 12px" onclick="kaptanSil(\'' +
-          htmlEsc(k.kod) + '\')">Sil</button></td></tr>').join("") + '</tbody></table>'
+          '<button class="cb" style="width:auto;margin:0 6px 0 0;padding:6px 12px" data-act="ksifre" data-kod="' +
+          htmlEsc(k.kod) + '">🔑 Şifre</button>' +
+          '<button class="cb" style="width:auto;margin:0;padding:6px 12px" data-act="ksil" data-kod="' +
+          htmlEsc(k.kod) + '">Sil</button></td></tr>').join("") + '</tbody></table>'
       : '<div class="em">Henüz kaptan yok. Yukarıdan ekleyin.</div>';
   } catch (e) { kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata") + '</div>'; }
 }
@@ -434,6 +434,9 @@ async function kaptanEkle() {
   const pin = document.getElementById("kPin").value.trim();
   const dep = document.getElementById("kDep").value;
   if (!kod || !ad || !pin) { alert("Kod, ad ve PIN gerekli."); return; }
+  // Ayni kullanici adi varsa sunucu uzerine yazar (ad+PIN+departman degisir) — once sor.
+  if (KAPTAN_KODLAR.has(kod.toLowerCase()) &&
+      !confirm(kod + " zaten kayitli. Devam ederseniz o kisinin adi, PIN'i ve departmani DEGISTIRILIR. Devam edilsin mi?")) return;
   try {
     const { error } = await SB.rpc("kaptan_ekle", { p_sifre: SIFRE, p_kod: kod, p_ad: ad, p_pin: pin, p_departman: dep });
     if (error) throw error;
@@ -551,6 +554,22 @@ async function seedBaslat() {
   setTimeout(() => { btn.textContent = "☁ Mevcut listeleri buluta yükle"; btn.disabled = false; }, 3000);
   if (LISTE) listeYukle();
 }
+/* ---- Olay delegasyonu ----
+   Sunucudan gelen ad/kod değerleri inline onclick içine gömülmez: htmlEsc apostrofu
+   &#39; yapar, tarayıcı bunu JS ayrıştırmasından ÖNCE çözer ve "ALI'S PUB" gibi
+   adlarda handler bozulurdu. Değerler data-* ile taşınır, tıklama burada yakalanır. */
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-act]");
+  if (!t) return;
+  const kod = t.dataset.kod;
+  if (t.dataset.act === "pin")    outletPinYonet(kod, t.dataset.ad);
+  else if (t.dataset.act === "ksifre") kaptanSifre(kod);
+  else if (t.dataset.act === "ksil")   kaptanSil(kod);
+});
+document.addEventListener("change", e => {
+  const t = e.target.closest('[data-act="kdep"]');
+  if (t) kaptanDepDegistir(t.dataset.kod, t.value);
+});
 </script>
 </body>
 </html>

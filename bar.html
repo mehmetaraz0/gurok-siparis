@@ -83,7 +83,7 @@ let C = null;        // seçili outlet
 let kirli = false;   // gönderilmemiş değişiklik var mı
 let siparisId = null; // idempotency: bu sipariş denemesinin istemci kimliği
 let GIZLI = new Set(); // stoğu 0/negatif → listede gizlenecek kodlar
-let PIN = null;        // outlet PIN'i (varsa) — her siparişte gönderilir
+// NOT: eski outlet-PIN akisi kaldirildi; kimlik KAPTAN uzerinden dogrulanir.
 let KAPTAN = null;     // {kod, ad, pin} — bar girişi kaptan kimliği (mutfakta null)
 
 // Bir gönderim denemesi için benzersiz kimlik. Ağ koparsa aynı kimlikle tekrar
@@ -131,11 +131,13 @@ function birimSecimGoster() {
   document.getElementById("barEkran").style.display = "";
   document.getElementById("kaptanAdEt").textContent = "Kullanıcı: " + (KAPTAN ? KAPTAN.ad : "");
   const dep = (KAPTAN && KAPTAN.departman) ? KAPTAN.departman : "hepsi";
-  const barlar = (dep === "mutfak") ? "" : D.map(o =>
-    '<button class="bolum-btn" onclick="barSec(' + JSON.stringify(o).replace(/"/g, "&quot;") + ')">'
+  // Butonlar veriyi INDEKS ile taşır. Eskiden tüm outlet nesnesi (ürün listesiyle
+  // birlikte, ~268 KB) onclick attribute'una JSON olarak gömülüyordu.
+  const barlar = (dep === "mutfak") ? "" : D.map((o, i) =>
+    '<button class="bolum-btn" data-act="bar" data-i="' + i + '">'
     + htmlEsc(kisaKod(o.c)) + ' — ' + htmlEsc(o.n) + '</button>').join("");
-  const mutfaklar = (dep === "bar") ? "" : (typeof M !== "undefined" ? M : []).map(m =>
-    '<button class="bolum-btn" onclick="mutfakSec(' + JSON.stringify(m).replace(/"/g, "&quot;") + ')">'
+  const mutfaklar = (dep === "bar") ? "" : (typeof M !== "undefined" ? M : []).map((m, i) =>
+    '<button class="bolum-btn" data-act="mutfak" data-i="' + i + '">'
     + htmlEsc(kisaKod(m.c)) + ' — ' + htmlEsc(m.n) + ' <span>mutfak</span></button>').join("");
   document.getElementById("barButonlar").innerHTML = barlar + mutfaklar;
 }
@@ -180,13 +182,13 @@ function kaptanaCik() {
 }
 
 function bolumSecimGoster(m) {
+  SECILI_MUTFAK = m;
   document.getElementById("kilit").style.display = "none";
   document.getElementById("barEkran").style.display = "none";
   document.getElementById("bolumEkran").style.display = "";
   document.getElementById("bolumBaslik").textContent = m.n;
-  document.getElementById("bolumButonlar").innerHTML = m.b.map(b =>
-    '<button class="bolum-btn" onclick="mutfakBolumAc(' + JSON.stringify(m).replace(/"/g, "&quot;")
-    + ', \'' + b + '\')">' + htmlEsc(b)
+  document.getElementById("bolumButonlar").innerHTML = m.b.map((b, i) =>
+    '<button class="bolum-btn" data-act="bolum" data-i="' + i + '">' + htmlEsc(b)
     + ' <span>' + (MUTFAK_LISTE[b] ? MUTFAK_LISTE[b].length : 0) + ' kalem</span></button>').join("");
 }
 
@@ -526,7 +528,7 @@ async function gonder() {
   try {
     const { data, error } = await SB.rpc("siparis_gonder", {
       p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler,
-      p_bolum: C.bl, p_istemci_id: siparisId, p_pin: PIN,
+      p_bolum: C.bl, p_istemci_id: siparisId,
       p_kaptan_kod: KAPTAN ? KAPTAN.kod : null,
       p_kaptan_pin: KAPTAN ? KAPTAN.pin : null
     });
@@ -562,6 +564,19 @@ async function gonder() {
 /* Gönderilmemiş değişiklikle sayfadan çıkışta uyar */
 window.addEventListener("beforeunload", e => {
   if (kirli) { e.preventDefault(); e.returnValue = ""; }
+});
+/* ---- Olay delegasyonu ----
+   Buton verisi data-* ile indeks olarak taşınır; nesneler onclick attribute'una
+   gömülmez (DOM şişmesi + apostroflu adlarda bozulma riski). */
+let SECILI_MUTFAK = null;   // bölüm ekranındaki mutfak
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-act]");
+  if (!t) return;
+  const i = Number(t.dataset.i);
+  if (t.dataset.act === "bar")         barSec(D[i]);
+  else if (t.dataset.act === "mutfak") mutfakSec(M[i]);
+  else if (t.dataset.act === "bolum" && SECILI_MUTFAK)
+    mutfakBolumAc(SECILI_MUTFAK, SECILI_MUTFAK.b[i]);
 });
 </script>
 </body>
