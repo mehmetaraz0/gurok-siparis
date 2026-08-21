@@ -170,7 +170,7 @@ let zamanlayici = null;
 
 /* ================= Giriş ================= */
 
-const kayitli = sessionStorage.getItem("gurok_depo_sifre");
+const kayitli = (oturumTaze("gurok_depo") ? sessionStorage.getItem("gurok_depo_sifre") : null);
 if (kayitli) { SIFRE = kayitli; basla(); }
 
 document.getElementById("sifre").addEventListener("keydown", e => {
@@ -192,7 +192,7 @@ async function giris() {
     const { error } = await SB.rpc("depo_liste", { p_sifre: deger, p_tarih: bugun() });
     if (error) throw error;
     SIFRE = deger;
-    sessionStorage.setItem("gurok_depo_sifre", deger);
+    sessionStorage.setItem("gurok_depo_sifre", deger); oturumDamgala("gurok_depo");
     basla();
   } catch (e) {
     console.error(e);

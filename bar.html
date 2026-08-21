@@ -110,12 +110,18 @@ async function kaptanGiris() {
   if (!pin) { err.textContent = "PIN girin."; return; }
   try {
     const { data, error } = await SB.rpc("kaptan_giris", { p_kod: kod, p_pin: pin });
+    // Eski DB exception atar (error dolu); yeni DB {ok:false, hata} döner.
     if (error) { err.textContent = "Kaptan veya PIN hatalı."; return; }
+    if (!data || data.ok === false || !data.ad) {
+      err.textContent = (data && data.hata) ? data.hata : "Kaptan veya PIN hatalı.";
+      return;
+    }
     KAPTAN = { kod: kod, ad: data.ad, pin: pin, departman: data.departman || "hepsi" };
     sessionStorage.setItem("gurok_kaptan_kod", kod);
     sessionStorage.setItem("gurok_kaptan_pin", pin);
     sessionStorage.setItem("gurok_kaptan_ad", data.ad);
     sessionStorage.setItem("gurok_kaptan_dep", KAPTAN.departman);
+    oturumDamgala("gurok_kaptan");
     err.textContent = "";
     document.getElementById("kaptanKod").value = "";
     document.getElementById("kaptanPin").value = "";
@@ -246,7 +252,12 @@ function barDegistir() {
   const ad  = sessionStorage.getItem("gurok_kaptan_ad");
   const pin = sessionStorage.getItem("gurok_kaptan_pin");
   const dep = sessionStorage.getItem("gurok_kaptan_dep") || "hepsi";
-  if (kod && ad && pin) KAPTAN = { kod, ad, pin, departman: dep };
+  if (kod && ad && pin && oturumTaze("gurok_kaptan")) {
+    KAPTAN = { kod, ad, pin, departman: dep };
+  } else {
+    ["gurok_kaptan_kod","gurok_kaptan_pin","gurok_kaptan_ad","gurok_kaptan_dep","gurok_kaptan_zaman"]
+      .forEach(k => sessionStorage.removeItem(k));   // süresi dolmuş oturum
+  }
 })();
 
 // Sekme oturumunda kayıtlı birim varsa tekrar sorma (yalnız giriş yapılmışsa).

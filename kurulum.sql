@@ -94,6 +94,26 @@ alter table public.kaptan add constraint kaptan_departman_chk check (departman i
 update public.kaptan set kod = lower(kod) where kod <> lower(kod);
 create unique index if not exists kaptan_kod_lower_idx on public.kaptan (lower(kod));
 
+-- Hatalı PIN denemeleri (brute-force engeli). YALNIZCA başarısız denemeler yazılır;
+-- başarılı girişte o kullanıcının kayıtları silinir.
+-- NOT: kayıt kaptan_giris içinde tutulur — hata exception ile dönseydi transaction
+-- geri alınır ve sayaç hiç artmazdı. Bu yüzden kaptan_giris artık {ok:false} döner.
+create table if not exists public.kaptan_deneme (
+  id    bigserial primary key,
+  kod   text not null,
+  zaman timestamptz not null default now()
+);
+create index if not exists kaptan_deneme_idx on public.kaptan_deneme (kod, zaman desc);
+alter table public.kaptan_deneme enable row level security;
+revoke all on public.kaptan_deneme from anon, authenticated;
+
+-- Kilitli mi? (son 15 dakikada 5+ hatalı deneme)
+create or replace function public.kaptan_kilitli(p_kod text)
+returns boolean language sql security definer set search_path = public as $$
+  select count(*) >= 5 from kaptan_deneme
+   where kod = lower(coalesce(p_kod,'')) and zaman > now() - interval '15 minutes';
+$$;
+
 create table if not exists public.stok (
   kod        text primary key,
   ad         text,
@@ -248,7 +268,12 @@ begin
   if not exists (select 1 from kaptan
                   where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
                     and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin))
-  then raise exception 'Kullanici girisi gerekli'; end if;
+  then
+    if kaptan_kilitli(p_kaptan_kod) then
+      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
+    end if;
+    raise exception 'Kullanici girisi gerekli';
+  end if;
   return coalesce((select jsonb_agg(kod) from stok where miktar <= 0), '[]'::jsonb);
 end $$;
 
@@ -290,7 +315,12 @@ begin
   select ad, departman into v_gonderen, v_dep from kaptan
    where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
      and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
-  if v_gonderen is null then raise exception 'Kullanici girisi gerekli'; end if;
+  if v_gonderen is null then
+    if kaptan_kilitli(p_kaptan_kod) then
+      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
+    end if;
+    raise exception 'Kullanici girisi gerekli';
+  end if;
 
   -- DEPARTMAN SUNUCUDA ZORLANIR. Client'taki birim filtresi yalnızca kolaylıktır;
   -- sessionStorage değiştirilerek atlanabilirdi.
@@ -886,16 +916,33 @@ end $$;
 -- tüketicisi kalmadı ve personel ad listesini anon'a açıyordu (PII sızıntısı).
 drop function if exists public.kaptan_liste_ac();
 
--- Kaptan girişi: kod (BÜYÜK/küçük harf fark etmez) + PIN doğrula
+-- Kaptan girişi: kod (BÜYÜK/küçük harf fark etmez) + PIN.
+-- Hatalı denemede EXCEPTION ATMAZ ({ok:false} döner) — aksi halde deneme sayacı
+-- rollback olur ve brute-force engeli hiç çalışmaz.
 create or replace function public.kaptan_giris(p_kod text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_ad text; v_kod text; v_dep text;
+declare v_ad text; v_kod text; v_dep text; v_k text := lower(coalesce(p_kod,''));
 begin
+  -- Eski kayıtları temizle (tablo şişmesin)
+  delete from kaptan_deneme where zaman < now() - interval '1 day';
+
+  if kaptan_kilitli(v_k) then
+    return jsonb_build_object('ok', false,
+      'hata', 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.');
+  end if;
+
   select kod, ad, departman into v_kod, v_ad, v_dep from kaptan
-   where lower(kod) = lower(coalesce(p_kod,'')) and aktif
+   where lower(kod) = v_k and aktif
      and pin = extensions.crypt(coalesce(p_pin,''), pin);
-  if v_ad is null then raise exception 'Kaptan kodu veya PIN hatali'; end if;
-  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_ad, 'departman', coalesce(v_dep,'hepsi'));
+
+  if v_ad is null then
+    insert into kaptan_deneme (kod) values (v_k);
+    return jsonb_build_object('ok', false, 'hata', 'Kaptan kodu veya PIN hatali');
+  end if;
+
+  delete from kaptan_deneme where kod = v_k;      -- başarılı giriş sayacı sıfırlar
+  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_ad,
+    'departman', coalesce(v_dep,'hepsi'));
 end $$;
 
 -- Admin: kaptan listesi (PIN yok)
@@ -967,7 +1014,13 @@ begin
   select true into v_var from kaptan
    where lower(kod) = lower(coalesce(p_kod,'')) and aktif
      and pin = extensions.crypt(coalesce(p_eski_pin,''), pin);
-  if v_var is null then raise exception 'Eski PIN hatali'; end if;
+  if v_var is null then
+    -- kaptan_giris kilitlendiğinde saldırgan buraya kayabilir; aynı kilit burada da geçerli.
+    if kaptan_kilitli(p_kod) then
+      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
+    end if;
+    raise exception 'Eski PIN hatali';
+  end if;
   update kaptan set pin = extensions.crypt(p_yeni_pin, extensions.gen_salt('bf', 10))
    where lower(kod) = lower(coalesce(p_kod,''));
   return jsonb_build_object('ok', true);

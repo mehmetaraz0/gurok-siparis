@@ -171,6 +171,22 @@ function miktarHaritasiTemizle(obj) {
   }
   return temiz;
 }
+
+/* ---------- Oturum süresi ----------
+   Paylaşılan tablette sekme hiç kapanmıyor; damgasız oturum sabah giren kişinin
+   adına akşam sipariş gitmesine yol açar. Girişler MUTLAK süreyle sınırlanır. */
+const OTURUM_SAAT = 12;
+
+function oturumDamgala(anahtar) {
+  try { sessionStorage.setItem(anahtar + "_zaman", String(Date.now())); } catch (e) {}
+}
+
+function oturumTaze(anahtar) {
+  try {
+    const t = Number(sessionStorage.getItem(anahtar + "_zaman") || 0);
+    return t > 0 && (Date.now() - t) < OTURUM_SAAT * 3600 * 1000;
+  } catch (e) { return false; }
+}
 /* ---------- Onaylanan miktar ---------- */
 
 // Bir kalemin Excel'e girecek miktarı.

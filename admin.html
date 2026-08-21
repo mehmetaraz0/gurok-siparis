@@ -85,7 +85,7 @@ let LISTE = null;       // seçili liste kimliği
 let KALEMLER = [];      // seçili listenin kalemleri (ekranda görülen sıra)
 
 /* ---- Giriş ---- */
-const kayitli = sessionStorage.getItem("gurok_admin_sifre");
+const kayitli = (oturumTaze("gurok_admin") ? sessionStorage.getItem("gurok_admin_sifre") : null);
 if (kayitli) { SIFRE = kayitli; basla(); }
 document.getElementById("sifre").addEventListener("keydown", e => { if (e.key === "Enter") giris(); });
 
@@ -97,7 +97,7 @@ async function giris() {
   try {
     const { error } = await SB.rpc("katalog_giris", { p_sifre: d });
     if (error) throw error;
-    SIFRE = d; sessionStorage.setItem("gurok_admin_sifre", d); basla();
+    SIFRE = d; sessionStorage.setItem("gurok_admin_sifre", d); oturumDamgala("gurok_admin"); basla();
   } catch (e) {
     err.textContent = (e.message || "").includes("Sifre") ? "Şifre hatalı." : "Bağlantı kurulamadı.";
     inp.value = ""; inp.focus();
