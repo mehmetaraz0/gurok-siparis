@@ -366,6 +366,7 @@ async function makbuzCiz() {
   kutu.style.display = "";
   document.getElementById("makbuzListe").innerHTML = liste.map(x => {
     const bekliyor = x.durum === "talep";
+    const onayli = x.durum === "onaylandi";
     const rozet = x.durum === "iptal"
                     ? '<span class="mk-iptal">🚫 İptal'
                       + (x.iptal_eden ? ' · ' + htmlEsc(x.iptal_eden) : "") + '</span>'
@@ -379,8 +380,75 @@ async function makbuzCiz() {
     return '<div class="makbuz-sat"><b>' + htmlEsc(x.siparis_no) + '</b>'
       + '<span>' + htmlEsc(x.saat || "") + ' — ' + (x.kalem || 0) + ' kalem'
       + (x.gonderen ? ' · 👤 ' + htmlEsc(x.gonderen) : "") + '</span>'
-      + rozet + butonlar + '</div>';
+      + rozet + teslimRozeti(x)
+      + (onayli ? '<div class="mk-btn">'
+          + '<button class="cb" data-act="never" data-no="' + htmlEsc(x.siparis_no) + '">'
+          + (ACIK_TESLIM === x.siparis_no ? '▲ Kapat' : '👁 Ne verildi?') + '</button></div>' : "")
+      + butonlar + teslimDetayHtml(x) + '</div>';
   }).join("");
+}
+
+/* Teslim mutabakatı: depo onayladıktan sonra kaptan ne verildiğini görür,
+   teslim aldığını onaylar ya da itiraz eder. Stok/Excel/tüketim etkilenmez. */
+let ACIK_TESLIM = null;   // detayı açık siparişin numarası
+
+function teslimRozeti(x) {
+  if (x.teslim_durum === "alindi")
+    return '<span class="mk-teslim">✓ Teslim alındı'
+         + (x.teslim_eden ? ' · ' + htmlEsc(x.teslim_eden) : "") + '</span>';
+  if (x.teslim_durum === "itiraz")
+    return '<span class="mk-itiraz">⚠ İtiraz'
+         + (x.teslim_not ? ' · ' + htmlEsc(x.teslim_not) : "") + '</span>';
+  return "";
+}
+
+// Onaylanan siparişin kalem karşılaştırması: istenen → verilen
+function teslimDetayHtml(x) {
+  if (ACIK_TESLIM !== x.siparis_no || !Array.isArray(x.kalemler)) return "";
+  let h = '<table class="tsl-tbl"><thead><tr><th>ÜRÜN</th><th>İSTENEN</th><th>VERİLEN</th></tr></thead><tbody>';
+  x.kalemler.forEach(el => {
+    const istenen = Number(el.m) || 0;
+    const verilen = (el.o === undefined || el.o === null) ? istenen : Number(el.o);
+    const fark = verilen !== istenen;
+    h += '<tr' + (fark ? ' class="tsl-fark"' : '') + '>'
+       + '<td>' + htmlEsc(el.a || el.k) + '</td>'
+       + '<td class="say">' + istenen + '</td>'
+       + '<td class="say">' + (verilen > 0 ? verilen : "verilmedi")
+       + (fark ? ' ⚠' : '') + '</td></tr>';
+  });
+  h += '</tbody></table>';
+  if (!x.teslim_durum) {
+    h += '<div class="mk-btn">'
+       + '<button class="cb" data-act="teslim-ok" data-no="' + htmlEsc(x.siparis_no) + '">✓ Teslim aldım</button>'
+       + '<button class="cb" data-act="teslim-red" data-no="' + htmlEsc(x.siparis_no) + '">⚠ Eksik/Yanlış</button>'
+       + '</div>';
+  }
+  return '<div class="tsl-detay">' + h + '</div>';
+}
+
+function teslimDetayAc(no) {
+  ACIK_TESLIM = (ACIK_TESLIM === no) ? null : no;
+  makbuzCiz();
+}
+
+async function siparisTeslim(no, durum) {
+  if (!KAPTAN) return;
+  let not = null;
+  if (durum === "itiraz") {
+    not = prompt("Sorun nedir? (kısaca)\n\nÖrn: 2 koli su eksik geldi");
+    if (not === null) return;                 // iptal
+  } else if (!confirm(no + " teslim alındı olarak işaretlenecek. Devam?")) return;
+  try {
+    const { error } = await SB.rpc("siparis_teslim", {
+      p_siparis_no: no, p_durum: durum, p_not: not,
+      p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
+    if (error) throw error;
+    ACIK_TESLIM = null;
+    await makbuzCiz();
+  } catch (e) {
+    console.error(e);
+    alert("Kaydedilemedi: " + (e.message || "bağlantı hatası"));
+  }
 }
 
 /* Geri çağırma: sunucu siparişi iptal eder ve kalemlerini döndürür.
@@ -658,6 +726,9 @@ document.addEventListener("click", e => {
   const t = e.target.closest("[data-act]");
   if (!t) return;
   const i = Number(t.dataset.i);
+  if (t.dataset.act === "never")       { teslimDetayAc(t.dataset.no);            return; }
+  if (t.dataset.act === "teslim-ok")   { siparisTeslim(t.dataset.no, "alindi");  return; }
+  if (t.dataset.act === "teslim-red")  { siparisTeslim(t.dataset.no, "itiraz");  return; }
   if (t.dataset.act === "duzelt")      { siparisGeriCagir(t.dataset.no, true);  return; }
   if (t.dataset.act === "iptal")       { siparisGeriCagir(t.dataset.no, false); return; }
   if (t.dataset.act === "bar")         barSec(D[i]);

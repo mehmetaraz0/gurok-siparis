@@ -361,7 +361,11 @@ function cizTalepler() {
               + (s.iptal_eden ? ' · ' + htmlEsc(s.iptal_eden) : "") + '</span>'
             : onaylandi
             ? '<span class="rz onay">✅ Onaylandı ' + (s.onay_saati ? saat(s.onay_saati) : "") + '</span>'
-            : '<span class="rz talep">🟡 Talep</span>') + '</span>'
+            : '<span class="rz talep">🟡 Talep</span>')
+          + (s.teslim_durum === "alindi"
+              ? ' <span class="rz teslim">✓ Teslim alındı</span>'
+              : s.teslim_durum === "itiraz"
+              ? ' <span class="rz itiraz">⚠ İTİRAZ</span>' : "") + '</span>'
        + '<span class="ileri">›</span>'
        + '</div>';
   });
@@ -613,6 +617,15 @@ function cizDetay(s) {
           + '<button class="cb" style="display:inline-block;width:auto;margin:0;padding:9px 16px" '
           + 'onclick="durumDegistir(\'talep\')">🔓 Kilidi Aç</button>'
         : '<button class="gb" onclick="durumDegistir(\'onaylandi\')">✅ ONAYLA ve KİLİTLE</button>')
+    + (s.teslim_durum === "alindi"
+        ? '<span class="rz teslim">✓ Teslim alındı'
+          + (s.teslim_eden ? ' · ' + htmlEsc(s.teslim_eden) : "")
+          + (s.teslim_saati ? ' · ' + saat(s.teslim_saati) : "") + '</span>'
+        : s.teslim_durum === "itiraz"
+        ? '<span class="rz itiraz">⚠ İTİRAZ'
+          + (s.teslim_eden ? ' · ' + htmlEsc(s.teslim_eden) : "")
+          + (s.teslim_not ? ' — ' + htmlEsc(s.teslim_not) : "") + '</span>'
+        : "")
     + '<button class="db" id="exBtn" onclick="detayExcel()">⬇ Excel İndir</button>'
     + '</div></div>';
 

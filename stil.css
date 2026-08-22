@@ -308,3 +308,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
   border-radius:10px;padding:2px 8px}
 .mk-btn{display:flex;gap:6px;width:100%;margin-top:6px}
 .mk-btn .cb{width:auto;margin:0;padding:5px 10px;font-size:11px}
+/* Teslim mutabakatı */
+.mk-teslim{font-size:10px;font-weight:700;color:#0b5ea8;background:#e6f0fb;
+  border-radius:10px;padding:2px 8px}
+.mk-itiraz{font-size:10px;font-weight:700;color:#a01010;background:#fde8e8;
+  border-radius:10px;padding:2px 8px}
+.tsl-detay{width:100%;margin-top:8px}
+.tsl-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.tsl-tbl th{background:#f2f4f7;color:#555;font-size:10px;text-align:left;padding:4px 6px}
+.tsl-tbl td{padding:4px 6px;border-bottom:1px solid #eee}
+.tsl-tbl .say{text-align:center;font-weight:700}
+.tsl-tbl tr.tsl-fark td{background:#fff4f4;color:#a01010}
+.rz.teslim{background:#e6f0fb;color:#0b5ea8}
+.rz.itiraz{background:#fde8e8;color:#a01010;font-weight:800}

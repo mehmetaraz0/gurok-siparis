@@ -42,6 +42,14 @@ alter table public.siparisler add constraint siparisler_durum_chk check (durum i
 -- Geri çağırma izi (kaptan iptal ettiğinde doldurulur)
 alter table public.siparisler add column if not exists iptal_saati timestamptz;
 alter table public.siparisler add column if not exists iptal_eden  text;
+-- Teslim mutabakatı (kaptan depo onayından sonra doldurur)
+alter table public.siparisler add column if not exists teslim_durum text;
+alter table public.siparisler add column if not exists teslim_saati timestamptz;
+alter table public.siparisler add column if not exists teslim_eden  text;
+alter table public.siparisler add column if not exists teslim_not   text;
+alter table public.siparisler drop constraint if exists siparisler_teslim_chk;
+alter table public.siparisler add constraint siparisler_teslim_chk
+  check (teslim_durum is null or teslim_durum in ('alindi','itiraz'));
 create index if not exists siparisler_tarih_idx on public.siparisler (tarih);
 create unique index if not exists siparisler_no_idx on public.siparisler (siparis_no);
 create unique index if not exists siparisler_istemci_idx
@@ -451,7 +459,9 @@ begin
              'siparis_no', siparis_no, 'outlet_kod', outlet_kod, 'outlet_ad', outlet_ad,
              'bolum', bolum, 'gonderen', gonderen, 'kalemler', kalemler,
              'gonderilme_saati', gonderilme_saati, 'durum', durum, 'onay_saati', onay_saati,
-             'iptal_saati', iptal_saati, 'iptal_eden', iptal_eden)
+             'iptal_saati', iptal_saati, 'iptal_eden', iptal_eden,
+             'teslim_durum', teslim_durum, 'teslim_eden', teslim_eden,
+             'teslim_not', teslim_not, 'teslim_saati', teslim_saati)
              order by gonderilme_saati desc)
       from siparisler where tarih = v_tarih), '[]'::jsonb);
 end $$;
@@ -529,8 +539,14 @@ begin
      where s.kod = x.kod and x.mik > 0;
   end if;
 
+  -- Kilit açılırsa kaptanın teslim onayı geçersizdir: depo düzeltme yapacak,
+  -- kaptan yeniden kontrol etmeli.
   update siparisler set durum = p_durum,
-         onay_saati = case when p_durum='onaylandi' then now() else null end
+         onay_saati = case when p_durum='onaylandi' then now() else null end,
+         teslim_durum = case when p_durum='talep' then null else teslim_durum end,
+         teslim_saati = case when p_durum='talep' then null else teslim_saati end,
+         teslim_eden  = case when p_durum='talep' then null else teslim_eden  end,
+         teslim_not   = case when p_durum='talep' then null else teslim_not   end
    where siparis_no = p_siparis_no returning onay_saati into v_saat;
   return jsonb_build_object('ok', true, 'durum', p_durum,
     'saat', case when v_saat is null then null
@@ -1080,7 +1096,10 @@ begin
              'siparis_no', siparis_no,
              'saat', to_char(gonderilme_saati at time zone 'Europe/Istanbul','HH24:MI'),
              'kalem', jsonb_array_length(kalemler),
-             'durum', durum, 'gonderen', gonderen, 'iptal_eden', iptal_eden)
+             'durum', durum, 'gonderen', gonderen, 'iptal_eden', iptal_eden,
+             'kalemler', kalemler, 'teslim_durum', teslim_durum,
+             'teslim_eden', teslim_eden, 'teslim_not', teslim_not,
+             'teslim_saati', teslim_saati)
              order by gonderilme_saati desc)
       from siparisler
      where tarih = v_tarih and outlet_kod = p_outlet_kod
@@ -1131,6 +1150,53 @@ begin
   return jsonb_build_object('ok', true, 'kalemler', v_kalemler);
 end $$;
 
+
+-- Teslim onayı: depo onayladıktan sonra kaptan ne verildiğini görür ve
+-- "teslim aldım" der ya da itiraz eder. Stok/Excel/tüketim ETKİLENMEZ —
+-- bu yalnızca mutabakat kaydıdır.
+create or replace function public.siparis_teslim(
+  p_siparis_no text, p_durum text, p_not text,
+  p_kaptan_kod text, p_kaptan_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_ad text; v_dep text; v_tur text; v_durum text; v_tarih date; v_outlet text;
+  v_bugun date := (now() at time zone 'Europe/Istanbul')::date;
+begin
+  if coalesce(p_durum,'') not in ('alindi','itiraz') then
+    raise exception 'Gecersiz teslim durumu';
+  end if;
+
+  select ad, departman into v_ad, v_dep from kaptan
+   where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
+     and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
+  if v_ad is null then
+    if kaptan_kilitli(p_kaptan_kod) then
+      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
+    end if;
+    raise exception 'Kullanici girisi gerekli';
+  end if;
+
+  select durum, tarih, outlet_kod into v_durum, v_tarih, v_outlet
+    from siparisler where siparis_no = p_siparis_no;
+  if v_durum is null then raise exception 'Siparis bulunamadi'; end if;
+  if v_tarih <> v_bugun then raise exception 'Yalnizca bugunku siparis onaylanabilir'; end if;
+  if v_durum <> 'onaylandi' then raise exception 'Once depo onaylamali'; end if;
+
+  select tur into v_tur from outletler where kod = v_outlet;
+  if coalesce(v_dep,'hepsi') <> 'hepsi' and v_dep <> coalesce(v_tur,'bar') then
+    raise exception 'Bu birime yetkiniz yok';
+  end if;
+
+  update siparisler
+     set teslim_durum = p_durum,
+         teslim_saati = now(),
+         teslim_eden  = v_ad,
+         teslim_not   = nullif(left(coalesce(p_not,''), 200), '')
+   where siparis_no = p_siparis_no;
+
+  return jsonb_build_object('ok', true, 'teslim_durum', p_durum, 'teslim_eden', v_ad);
+end $$;
+
 -- ================= İZİNLER (anon yalnızca fonksiyonları çağırır) =================
 revoke all on all functions in schema public from public;
 
@@ -1142,6 +1208,7 @@ grant execute on function public.stok_gizli_kodlar(text, text)                  
 grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text, text) to anon;
 grant execute on function public.bekleyen_siparisler(text, text, text, text)          to anon;
 grant execute on function public.siparis_geri_cagir(text, text, text)                 to anon;
+grant execute on function public.siparis_teslim(text, text, text, text, text)         to anon;
 grant execute on function public.kaptan_giris(text, text)                             to anon;
 grant execute on function public.kaptan_liste(text)                                   to anon;
 grant execute on function public.kaptan_ekle(text, text, text, text, text)            to anon;
