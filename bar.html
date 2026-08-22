@@ -366,7 +366,10 @@ async function makbuzCiz() {
   kutu.style.display = "";
   document.getElementById("makbuzListe").innerHTML = liste.map(x => {
     const bekliyor = x.durum === "talep";
-    const rozet = x.durum === "onaylandi" ? '<span class="mk-ok">✓ Onaylandı</span>'
+    const rozet = x.durum === "iptal"
+                    ? '<span class="mk-iptal">🚫 İptal'
+                      + (x.iptal_eden ? ' · ' + htmlEsc(x.iptal_eden) : "") + '</span>'
+                : x.durum === "onaylandi" ? '<span class="mk-ok">✓ Onaylandı</span>'
                 : bekliyor                ? '<span class="mk-bek">⏳ Bekliyor</span>' : "";
     const butonlar = bekliyor
       ? '<div class="mk-btn">'

@@ -450,9 +450,10 @@ begin
     select jsonb_agg(jsonb_build_object(
              'siparis_no', siparis_no, 'outlet_kod', outlet_kod, 'outlet_ad', outlet_ad,
              'bolum', bolum, 'gonderen', gonderen, 'kalemler', kalemler,
-             'gonderilme_saati', gonderilme_saati, 'durum', durum, 'onay_saati', onay_saati)
+             'gonderilme_saati', gonderilme_saati, 'durum', durum, 'onay_saati', onay_saati,
+             'iptal_saati', iptal_saati, 'iptal_eden', iptal_eden)
              order by gonderilme_saati desc)
-      from siparisler where tarih = v_tarih and durum <> 'iptal'), '[]'::jsonb);
+      from siparisler where tarih = v_tarih), '[]'::jsonb);
 end $$;
 
 create or replace function public.depo_envanter(p_sifre text, p_bas date, p_bit date)
@@ -1079,12 +1080,11 @@ begin
              'siparis_no', siparis_no,
              'saat', to_char(gonderilme_saati at time zone 'Europe/Istanbul','HH24:MI'),
              'kalem', jsonb_array_length(kalemler),
-             'durum', durum, 'gonderen', gonderen)
+             'durum', durum, 'gonderen', gonderen, 'iptal_eden', iptal_eden)
              order by gonderilme_saati desc)
       from siparisler
      where tarih = v_tarih and outlet_kod = p_outlet_kod
-       and coalesce(bolum,'') = coalesce(nullif(p_bolum,''),'')
-       and durum <> 'iptal'), '[]'::jsonb);
+       and coalesce(bolum,'') = coalesce(nullif(p_bolum,''),'')), '[]'::jsonb);
 end $$;
 
 -- Siparişi geri çağır (iptal et) ve kalemlerini döndür.

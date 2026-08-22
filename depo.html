@@ -345,7 +345,7 @@ function cizTalepler() {
     const duzeltilen = s.kalemler.filter(it =>
       it.o !== undefined && it.o !== null && it.o !== it.m && it.o > 0).length;
 
-    h += '<div class="talep-sat' + (onaylandi ? " onayli" : "") + '"'
+    h += '<div class="talep-sat' + (onaylandi ? " onayli" : "") + (s.durum === "iptal" ? " iptalli" : "") + '"'
        + ' onclick="detayAc(\'' + htmlEsc(s.siparis_no) + '\')">'
        + '<span class="tno">' + htmlEsc(s.siparis_no) + '</span>'
        + '<span><b>' + htmlEsc(kisaKod(s.outlet_kod)) + '</b> ' + htmlEsc(s.outlet_ad)
@@ -356,7 +356,10 @@ function cizTalepler() {
        + (duzeltilen ? ' <i class="uyari">' + duzeltilen + ' düzeltildi</i>' : '')
        + (verilmeyen ? ' <i class="uyari">' + verilmeyen + ' verilmedi</i>' : '')
        + '</span>'
-       + '<span>' + (onaylandi
+       + '<span>' + (s.durum === "iptal"
+            ? '<span class="rz iptal">🚫 İptal ' + (s.iptal_saati ? saat(s.iptal_saati) : "")
+              + (s.iptal_eden ? ' · ' + htmlEsc(s.iptal_eden) : "") + '</span>'
+            : onaylandi
             ? '<span class="rz onay">✅ Onaylandı ' + (s.onay_saati ? saat(s.onay_saati) : "") + '</span>'
             : '<span class="rz talep">🟡 Talep</span>') + '</span>'
        + '<span class="ileri">›</span>'
@@ -601,7 +604,11 @@ function cizDetay(s) {
     + ' &nbsp;·&nbsp; ' + saat(s.gonderilme_saati) + ' &nbsp;·&nbsp; ' + s.kalemler.length + ' kalem</div>'
     + '</div>'
     + '<div class="detay-btn">'
-    + (onaylandi
+    + (s.durum === "iptal"
+        ? '<span class="rz iptal">🚫 Bu sipariş iptal edildi'
+          + (s.iptal_eden ? ' · ' + htmlEsc(s.iptal_eden) : "")
+          + (s.iptal_saati ? ' · ' + saat(s.iptal_saati) : "") + '</span>'
+        : onaylandi
         ? '<span class="rz onay">✅ Onaylandı ' + (s.onay_saati ? saat(s.onay_saati) : "") + '</span>'
           + '<button class="cb" style="display:inline-block;width:auto;margin:0;padding:9px 16px" '
           + 'onclick="durumDegistir(\'talep\')">🔓 Kilidi Aç</button>'
