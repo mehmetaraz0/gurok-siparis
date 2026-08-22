@@ -300,3 +300,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
   .env-tbl{font-size:11px}
   .env-tbl th:nth-child(6),.env-sat td:nth-child(6){display:none}  /* HAREKET sütunu */
 }
+/* Gönderim listesi: durum rozeti + geri çağırma butonları */
+.makbuz-sat{flex-wrap:wrap}
+.mk-ok{font-size:10px;font-weight:700;color:#1a6b3c;background:#e8f5ee;
+  border-radius:10px;padding:2px 8px}
+.mk-bek{font-size:10px;font-weight:700;color:#b06000;background:#fff4e0;
+  border-radius:10px;padding:2px 8px}
+.mk-btn{display:flex;gap:6px;width:100%;margin-top:6px}
+.mk-btn .cb{width:auto;margin:0;padding:5px 10px;font-size:11px}

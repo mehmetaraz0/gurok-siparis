@@ -342,15 +342,86 @@ function makbuzEkle(kod, kayit) {
   } catch (e) {}
 }
 
-function makbuzCiz() {
+/* Gönderim listesi SUNUCUDAN gelir: başka kaptanın gönderdiği sipariş de görünür ve
+   durumu (bekliyor/onaylandı) doğru bilinir. Sunucuya ulaşılamazsa yerel makbuza düşer.
+   Bekleyen siparişlerde geri çağırma (düzelt / iptal) butonları açılır. */
+let BEKLEYEN = null;   // sunucudan gelen liste (null = alınamadı)
+
+async function makbuzCiz() {
   const kutu = document.getElementById("makbuz");
-  const liste = makbuzOku(anahtar());
+  const yerel = makbuzOku(anahtar());
+
+  BEKLEYEN = null;
+  if (C && KAPTAN) {
+    try {
+      const { data, error } = await SB.rpc("bekleyen_siparisler", {
+        p_outlet_kod: C.c, p_bolum: C.bl, p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
+      if (!error && Array.isArray(data)) BEKLEYEN = data;
+    } catch (e) { /* çevrimdışı — yerel makbuz gösterilir */ }
+  }
+
+  const liste = BEKLEYEN || yerel.map(x => ({ siparis_no: x.no, saat: x.saat, kalem: x.kalem }));
   if (!liste.length) { kutu.style.display = "none"; return; }
 
   kutu.style.display = "";
-  document.getElementById("makbuzListe").innerHTML = liste.map(x =>
-    '<div class="makbuz-sat"><b>' + htmlEsc(x.no) + '</b>'
-    + '<span>' + htmlEsc(x.saat) + ' — ' + x.kalem + ' kalem</span></div>').join("");
+  document.getElementById("makbuzListe").innerHTML = liste.map(x => {
+    const bekliyor = x.durum === "talep";
+    const rozet = x.durum === "onaylandi" ? '<span class="mk-ok">✓ Onaylandı</span>'
+                : bekliyor                ? '<span class="mk-bek">⏳ Bekliyor</span>' : "";
+    const butonlar = bekliyor
+      ? '<div class="mk-btn">'
+        + '<button class="cb" data-act="duzelt" data-no="' + htmlEsc(x.siparis_no) + '">↩ Düzelt</button>'
+        + '<button class="cb" data-act="iptal"  data-no="' + htmlEsc(x.siparis_no) + '">🗑 İptal</button>'
+        + '</div>' : "";
+    return '<div class="makbuz-sat"><b>' + htmlEsc(x.siparis_no) + '</b>'
+      + '<span>' + htmlEsc(x.saat || "") + ' — ' + (x.kalem || 0) + ' kalem'
+      + (x.gonderen ? ' · 👤 ' + htmlEsc(x.gonderen) : "") + '</span>'
+      + rozet + butonlar + '</div>';
+  }).join("");
+}
+
+/* Geri çağırma: sunucu siparişi iptal eder ve kalemlerini döndürür.
+   duzelt=true ise kalemler ekrana geri yüklenir (baştan girilmesin). */
+async function siparisGeriCagir(no, duzelt) {
+  if (!KAPTAN) return;
+  const soru = duzelt
+    ? no + " geri çağrılacak ve kalemleri ekrana yüklenecek.\n\nDüzeltip yeniden göndermeniz gerekir. Devam?"
+    : no + " İPTAL EDİLECEK.\n\nDepoya gitmez. Devam?";
+  if (!confirm(soru)) return;
+  try {
+    const { data, error } = await SB.rpc("siparis_geri_cagir",
+      { p_siparis_no: no, p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
+    if (error) throw error;
+
+    makbuzSil(anahtar(), no);        // yerel makbuzdan da düş
+    if (duzelt && data && Array.isArray(data.kalemler)) {
+      const q = {};
+      data.kalemler.forEach(el => {
+        const m = (el.o === undefined || el.o === null) ? Number(el.m) : Number(el.o);
+        if (el.k && m > 0) q[el.k] = m;
+      });
+      Q[anahtar()] = miktarHaritasiTemizle(q);
+      kirli = true;
+      taslakYaz();
+      rl(); us();
+      durum("hata", "⚠ " + no + " geri çağrıldı — düzeltip yeniden gönderin");
+    } else {
+      durum("yok", no + " iptal edildi");
+    }
+    await makbuzCiz();
+  } catch (e) {
+    console.error(e);
+    alert("Geri çağrılamadı: " + (e.message || "bağlantı hatası"));
+    await makbuzCiz();
+  }
+}
+
+// Yerel makbuz kaydından bir siparişi düşür (iptal sonrası)
+function makbuzSil(kod, no) {
+  try {
+    const liste = makbuzOku(kod).filter(x => x.no !== no);
+    localStorage.setItem(makbuzAnahtar(kod), JSON.stringify({ tarih: bugun(), liste }));
+  } catch (e) {}
 }
 
 function durum(sinif, metin) {
@@ -584,6 +655,8 @@ document.addEventListener("click", e => {
   const t = e.target.closest("[data-act]");
   if (!t) return;
   const i = Number(t.dataset.i);
+  if (t.dataset.act === "duzelt")      { siparisGeriCagir(t.dataset.no, true);  return; }
+  if (t.dataset.act === "iptal")       { siparisGeriCagir(t.dataset.no, false); return; }
   if (t.dataset.act === "bar")         barSec(D[i]);
   else if (t.dataset.act === "mutfak") mutfakSec(M[i]);
   else if (t.dataset.act === "bolum" && SECILI_MUTFAK)

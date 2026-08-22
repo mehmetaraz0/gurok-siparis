@@ -38,7 +38,10 @@ alter table public.siparisler add column if not exists istemci_id text;
 -- Eski "gün+outlet tekil" kısıtı kalktı (bir outlet günde çok sipariş verebilir)
 alter table public.siparisler drop constraint if exists siparisler_tarih_outlet_kod_key;
 alter table public.siparisler drop constraint if exists siparisler_durum_chk;
-alter table public.siparisler add constraint siparisler_durum_chk check (durum in ('talep','onaylandi'));
+alter table public.siparisler add constraint siparisler_durum_chk check (durum in ('talep','onaylandi','iptal'));
+-- Geri çağırma izi (kaptan iptal ettiğinde doldurulur)
+alter table public.siparisler add column if not exists iptal_saati timestamptz;
+alter table public.siparisler add column if not exists iptal_eden  text;
 create index if not exists siparisler_tarih_idx on public.siparisler (tarih);
 create unique index if not exists siparisler_no_idx on public.siparisler (siparis_no);
 create unique index if not exists siparisler_istemci_idx
@@ -449,7 +452,7 @@ begin
              'bolum', bolum, 'gonderen', gonderen, 'kalemler', kalemler,
              'gonderilme_saati', gonderilme_saati, 'durum', durum, 'onay_saati', onay_saati)
              order by gonderilme_saati desc)
-      from siparisler where tarih = v_tarih), '[]'::jsonb);
+      from siparisler where tarih = v_tarih and durum <> 'iptal'), '[]'::jsonb);
 end $$;
 
 create or replace function public.depo_envanter(p_sifre text, p_bas date, p_bit date)
@@ -479,6 +482,7 @@ begin
   select durum into v_durum from siparisler where siparis_no = p_siparis_no;
   if not found then raise exception 'Siparis bulunamadi'; end if;
   if v_durum = 'onaylandi' then raise exception 'Siparis kilitli, once kilidi acin'; end if;
+  if v_durum = 'iptal' then raise exception 'Siparis iptal edilmis'; end if;
   update siparisler set kalemler = (
       select jsonb_agg(case when el->>'k' = p_kalem_kod
                             then el || jsonb_build_object('o', p_onay) else el end order by ord)
@@ -496,6 +500,8 @@ begin
   if p_durum not in ('talep','onaylandi') then raise exception 'Gecersiz durum'; end if;
   select durum into v_eski from siparisler where siparis_no = p_siparis_no;
   if not found then raise exception 'Siparis bulunamadi'; end if;
+  -- İptal edilmiş sipariş onaylanamaz: stok düşmeden durum 'onaylandi' olurdu.
+  if v_eski = 'iptal' then raise exception 'Siparis iptal edilmis'; end if;
 
   if p_durum = 'onaylandi' and v_eski = 'talep' then
     select string_agg(s.ad || ' (' || st.miktar || '->' || (st.miktar - s.mik)
@@ -1047,6 +1053,84 @@ begin
 end $$;
 
 
+
+-- ================= SİPARİŞ GERİ ÇAĞIRMA (kaptan) =================
+-- Depo henüz ONAYLAMADIYSA kaptan kendi biriminin siparişini geri çağırabilir:
+-- düzeltip yeniden gönderir ya da tamamen iptal eder. Kayıt silinmez, iz kalır.
+
+-- O birimin BUGÜNKÜ siparişleri (iptal olanlar dönmez)
+create or replace function public.bekleyen_siparisler(
+  p_outlet_kod text, p_bolum text, p_kaptan_kod text, p_kaptan_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_tarih date := (now() at time zone 'Europe/Istanbul')::date;
+begin
+  if not exists (select 1 from kaptan
+                  where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
+                    and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin))
+  then
+    if kaptan_kilitli(p_kaptan_kod) then
+      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
+    end if;
+    raise exception 'Kullanici girisi gerekli';
+  end if;
+
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'siparis_no', siparis_no,
+             'saat', to_char(gonderilme_saati at time zone 'Europe/Istanbul','HH24:MI'),
+             'kalem', jsonb_array_length(kalemler),
+             'durum', durum, 'gonderen', gonderen)
+             order by gonderilme_saati desc)
+      from siparisler
+     where tarih = v_tarih and outlet_kod = p_outlet_kod
+       and coalesce(bolum,'') = coalesce(nullif(p_bolum,''),'')
+       and durum <> 'iptal'), '[]'::jsonb);
+end $$;
+
+-- Siparişi geri çağır (iptal et) ve kalemlerini döndür.
+-- Yalnız BUGÜN + durum='talep' olan sipariş geri çağrılabilir.
+create or replace function public.siparis_geri_cagir(
+  p_siparis_no text, p_kaptan_kod text, p_kaptan_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_ad text; v_dep text; v_tur text; v_kalemler jsonb;
+  v_tarih date; v_outlet text;
+  v_bugun date := (now() at time zone 'Europe/Istanbul')::date;
+begin
+  select ad, departman into v_ad, v_dep from kaptan
+   where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
+     and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
+  if v_ad is null then
+    if kaptan_kilitli(p_kaptan_kod) then
+      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
+    end if;
+    raise exception 'Kullanici girisi gerekli';
+  end if;
+
+  select tarih, outlet_kod into v_tarih, v_outlet
+    from siparisler where siparis_no = p_siparis_no;
+  if v_tarih is null then raise exception 'Siparis bulunamadi'; end if;
+  if v_tarih <> v_bugun then raise exception 'Yalnizca bugunku siparis geri cagirilabilir'; end if;
+
+  -- Departman kuralı (bar personeli mutfak siparişini geri çağıramaz)
+  select tur into v_tur from outletler where kod = v_outlet;
+  if coalesce(v_dep,'hepsi') <> 'hepsi' and v_dep <> coalesce(v_tur,'bar') then
+    raise exception 'Bu birime yetkiniz yok';
+  end if;
+
+  -- ATOMİK: yalnız hâlâ 'talep' ise iptale çevir. Depo aynı anda onaylıyorsa
+  -- hangisi önce davranırsa o kazanır; diğeri buradan net hata alır.
+  update siparisler
+     set durum = 'iptal', iptal_saati = now(), iptal_eden = v_ad
+   where siparis_no = p_siparis_no and durum = 'talep'
+  returning kalemler into v_kalemler;
+  if v_kalemler is null then
+    raise exception 'Bu siparis artik geri cagirilamaz (depo islem yapmis olabilir)';
+  end if;
+
+  return jsonb_build_object('ok', true, 'kalemler', v_kalemler);
+end $$;
+
 -- ================= İZİNLER (anon yalnızca fonksiyonları çağırır) =================
 revoke all on all functions in schema public from public;
 
@@ -1056,6 +1140,8 @@ revoke execute on function public.outlet_giris(text, text) from anon;
 grant execute on function public.katalog_getir(text, text, text, text)              to anon;
 grant execute on function public.stok_gizli_kodlar(text, text)                        to anon;
 grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text, text) to anon;
+grant execute on function public.bekleyen_siparisler(text, text, text, text)          to anon;
+grant execute on function public.siparis_geri_cagir(text, text, text)                 to anon;
 grant execute on function public.kaptan_giris(text, text)                             to anon;
 grant execute on function public.kaptan_liste(text)                                   to anon;
 grant execute on function public.kaptan_ekle(text, text, text, text, text)            to anon;
