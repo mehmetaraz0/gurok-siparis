@@ -695,12 +695,23 @@ async function durumDegistir(yeniDurum) {
   if (yeniDurum === "onaylandi") {
     const verilmeyen = s.kalemler.filter(it => gecerliMiktar(it) === 0).length;
 
-    // Onay stoğu taban stoğun altına indirecekse ENGELLE (onaylanamaz).
+    /* Onay stoğu taban stoğun altına indirecekse ENGELLE (onaylanamaz).
+
+       Bu yalnızca ÖN KONTROL: asıl engel sunucuda, depo_durum_degistir
+       "Taban stok engeli: ..." ile onayı reddediyor. Yani burası çalışmasa da
+       sipariş yanlışlıkla onaylanmaz — ama kullanıcı anlaşılır liste yerine ham
+       sunucu hatası görür. Eskiden hata sessizce yutuluyordu; artık en azından
+       konsola yazılıp kullanıcıya haber veriliyor. */
     let tabanAlti = [];
+    let onKontrolCalisti = true;
     try {
       const { data, error } = await SB.rpc("onay_stok_kontrol", { p_sifre: SIFRE, p_siparis_no: ACIK_NO });
-      if (!error) tabanAlti = data || [];
-    } catch (e) { /* stok/min modülü yoksa yok say */ }
+      if (error) throw error;
+      tabanAlti = data || [];
+    } catch (e) {
+      onKontrolCalisti = false;
+      console.error("onay_stok_kontrol:", e.message || e);   // stok/min modülü yoksa da buraya düşer
+    }
 
     if (tabanAlti.length) {
       alert("⛔ Bu sipariş ONAYLANAMAZ.\n\nŞu ürünler taban stoğun altına iner:\n"
@@ -711,6 +722,8 @@ async function durumDegistir(yeniDurum) {
 
     if (!confirm(s.siparis_no + " onaylanacak ve kilitlenecek.\n\n"
       + (verilmeyen ? verilmeyen + " ürün verilmedi olarak işaretli.\n" : "")
+      + (onKontrolCalisti ? "" : "⚠ Taban stok ön kontrolü yapılamadı; sunucu yine de\n"
+          + "taban altına inen siparişi reddedecektir.\n")
       + "Kilitli siparişte düzeltme yapılamaz (kilidi açabilirsiniz).\n\nOnaylansın mı?")) return;
   }
 
