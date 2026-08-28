@@ -1,0 +1,35 @@
+# CSM301 — TURK KAHVESI
+
+Bar listesinde: **145** · LN raporunda: **154**
+
+## LN'de var, bar listesinde YOK — 9 kalem
+
+Eklemek istediklerini `[x]` yap.
+
+
+### GNL01 AKTIVITE MALZEMELERI
+
+- [ ] `GNL01000339` — OKEY TAKIMI (ADET) · grup: **YENI KALEM — grup gerekli**
+
+### GNL07 HIJYEN VE SAGLIK MALZEMELERI
+
+- [ ] `GNL07000038` — DEODORANT (ADET) · grup: HIJYEN
+- [ ] `GNL07000017` — MAKAS PANSUMAN (ADET) · grup: HIJYEN
+
+### GNL18 TEMIZLIK MALZEMELERI
+
+- [ ] `GNL18000513` — COP TORBASI JUMBO (KAHVE) (PAKET) · grup: TEMIZLIK & DETERJAN
+- [ ] `GNL18000076` — PECETE BEYAZ CIFT KATLI (KOLI) · grup: TEMIZLIK & DETERJAN
+
+### ICA02 MESRUBATLAR
+
+- [ ] `ICA02000031` — GAZOZ KUTU 200 ML 24 LU (KOLI) · grup: **YENI KALEM — grup gerekli**
+
+### ICA05 SICAK VE TOZ ICECEKLER
+
+- [ ] `ICA05000042` — CAY MATCHA (KG) · grup: **YENI KALEM — grup gerekli**
+- [ ] `ICA05000151` — KAHVE VOM FASS (L) · grup: **YENI KALEM — grup gerekli**
+
+### YIY04 DONDURMALAR
+
+- [ ] `YIY04000164` — GLUTENSIZ DONDURMA VANILY (KOLI) · grup: **YENI KALEM — grup gerekli**

@@ -125,6 +125,52 @@ returns boolean language sql security definer set search_path = public as $$
    where kod = lower(coalesce(p_kod,'')) and zaman > now() - interval '15 minutes';
 $$;
 
+-- Kaptan PIN doğrulama + BAŞARISIZ DENEME KAYDI (tek kapı).
+--
+-- Eskiden sayacı yalnızca kaptan_giris besliyordu; PIN doğrulayan diğer yedi
+-- fonksiyon kilidi OKUYOR ama başarısız denemeyi YAZMIYORDU. Böylece
+-- stok_gizli_kodlar / katalog_getir gibi bir fonksiyon üzerinden sınırsız PIN
+-- denenebiliyordu: sayaç artmadığı için kilit hiç kurulmuyordu.
+--
+-- KRİTİK: çağıran fonksiyon KİMLİK hatasında RAISE ETMEMELİ; bu fonksiyonun
+-- döndürdüğü {ok:false} nesnesini olduğu gibi döndürmeli. raise exception
+-- transaction'ı geri alır ve kaptan_deneme kaydı da silinir — kaptan_giris'in
+-- {ok:false} dönmesinin sebebi de budur (bkz. kaptan_deneme tablo notu).
+-- YETKİ hatası (yanlış departman) için raise serbesttir; orada sayaca
+-- yazılacak bir şey yoktur.
+create or replace function public.kaptan_dogrula(p_kod text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_ad text; v_dep text; v_k text := lower(coalesce(p_kod,''));
+begin
+  -- Kod hiç verilmemiş: sayaca yazılacak bir kimlik yok, boş kod satırı üretme.
+  if v_k = '' then
+    return jsonb_build_object('ok', false, 'hata', 'Kullanici girisi gerekli');
+  end if;
+
+  if kaptan_kilitli(v_k) then
+    return jsonb_build_object('ok', false,
+      'hata', 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.');
+  end if;
+
+  select ad, departman into v_ad, v_dep from kaptan
+   where lower(kod) = v_k and aktif
+     and pin = extensions.crypt(coalesce(p_pin,''), pin);
+
+  if v_ad is null then
+    insert into kaptan_deneme (kod) values (v_k);
+    return jsonb_build_object('ok', false, 'hata', 'Kullanici girisi gerekli');
+  end if;
+
+  return jsonb_build_object('ok', true, 'ad', v_ad, 'departman', coalesce(v_dep,'hepsi'));
+end $$;
+
+-- Bir kaptan verilen birim türüne (bar/mutfak) yetkili mi?
+create or replace function public.kaptan_birim_yetkili(p_departman text, p_tur text)
+returns boolean language sql immutable as $$
+  select coalesce(p_departman,'hepsi') = 'hepsi'
+      or coalesce(p_departman,'hepsi') = coalesce(p_tur,'bar');
+$$;
+
 create table if not exists public.stok (
   kod        text primary key,
   ad         text,
@@ -268,16 +314,27 @@ create or replace function public.katalog_getir(
   p_kaptan_pin text default null,
   p_sifre      text default null)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_kimlik jsonb; v_tur text; v_admin boolean;
 begin
-  if not exists (select 1 from kaptan
-                  where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
-                    and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin))
-     and not (coalesce(p_sifre,'') <> '' and admin_dogru(p_sifre))
-  then
-    if kaptan_kilitli(p_kaptan_kod) then
-      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
+  v_admin := coalesce(p_sifre,'') <> '' and admin_dogru(p_sifre);
+
+  if not v_admin then
+    -- Admin yolu denenip yanlışsa kaptan yoluna DÜŞME: admin'e {ok:false} yerine
+    -- eskisi gibi hata dönmeli (istemci onu yakalıyor) ve sayaca da yazılmamalı.
+    if coalesce(p_sifre,'') <> '' then raise exception 'Sifre hatali'; end if;
+
+    v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+    -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+    if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
+
+    -- YATAY YETKİ: istenen liste kaptanın departmanına ait olmalı. Eskiden
+    -- p_liste hiç denetlenmiyordu; geçerli PIN'i olan bir bar personeli
+    -- mutfak katalogunu da çekebiliyordu.
+    -- liste = outlet kodu ('CSM315') ya da 'CMM201|KAHVALTI' → outlet kodu ilk parça.
+    select tur into v_tur from outletler where kod = split_part(p_liste, '|', 1);
+    if not kaptan_birim_yetkili(v_kimlik->>'departman', v_tur) then
+      raise exception 'Bu birime yetkiniz yok';
     end if;
-    raise exception 'Yetki gerekli';
   end if;
 
   return coalesce((select jsonb_agg(
@@ -295,16 +352,11 @@ end $$;
 drop function if exists public.stok_gizli_kodlar();
 create or replace function public.stok_gizli_kodlar(p_kaptan_kod text, p_kaptan_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_kimlik jsonb;
 begin
-  if not exists (select 1 from kaptan
-                  where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
-                    and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin))
-  then
-    if kaptan_kilitli(p_kaptan_kod) then
-      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
-    end if;
-    raise exception 'Kullanici girisi gerekli';
-  end if;
+  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+  if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
   return coalesce((select jsonb_agg(kod) from stok where miktar <= 0), '[]'::jsonb);
 end $$;
 
@@ -335,6 +387,7 @@ declare
   v_el jsonb; v_m numeric; v_ad text; v_liste text; v_gunluk int;
   v_gonderen text; v_tur text; v_dep text; v_min_hata text;
   v_iid text := nullif(left(coalesce(p_istemci_id, ''), 64), '');
+  v_kimlik jsonb;
   rec record;
 begin
   -- 1) Outlet gerçek mi + kimlik. TÜM birimler (bar + mutfak) kişi bazlı giriş ister.
@@ -343,19 +396,15 @@ begin
   if v_ad is null then raise exception 'Gecersiz outlet'; end if;
 
   -- Kişi (kaptan/personel) kimliği: geçerli + aktif kaptan PIN'i şart (kasa farketmez).
-  select ad, departman into v_gonderen, v_dep from kaptan
-   where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
-     and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
-  if v_gonderen is null then
-    if kaptan_kilitli(p_kaptan_kod) then
-      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
-    end if;
-    raise exception 'Kullanici girisi gerekli';
-  end if;
+  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+  if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
+  v_gonderen := v_kimlik->>'ad';
+  v_dep      := v_kimlik->>'departman';
 
   -- DEPARTMAN SUNUCUDA ZORLANIR. Client'taki birim filtresi yalnızca kolaylıktır;
   -- sessionStorage değiştirilerek atlanabilirdi.
-  if coalesce(v_dep,'hepsi') <> 'hepsi' and v_dep <> coalesce(v_tur,'bar') then
+  if not kaptan_birim_yetkili(v_dep, v_tur) then
     raise exception 'Bu birime siparis yetkiniz yok';
   end if;
 
@@ -964,28 +1013,25 @@ drop function if exists public.kaptan_liste_ac();
 -- rollback olur ve brute-force engeli hiç çalışmaz.
 create or replace function public.kaptan_giris(p_kod text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_ad text; v_kod text; v_dep text; v_k text := lower(coalesce(p_kod,''));
+declare v_kod text; v_kimlik jsonb; v_k text := lower(coalesce(p_kod,''));
 begin
   -- Eski kayıtları temizle (tablo şişmesin)
   delete from kaptan_deneme where zaman < now() - interval '1 day';
 
-  if kaptan_kilitli(v_k) then
-    return jsonb_build_object('ok', false,
-      'hata', 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.');
+  -- Doğrulama + başarısız deneme kaydı tek kapıda: kaptan_dogrula.
+  v_kimlik := kaptan_dogrula(p_kod, p_pin);
+  if not (v_kimlik->>'ok')::boolean then
+    -- Giriş ekranına özgü metin korunur (kilit mesajı olduğu gibi geçer).
+    if v_kimlik->>'hata' = 'Kullanici girisi gerekli' then
+      return jsonb_build_object('ok', false, 'hata', 'Kaptan kodu veya PIN hatali');
+    end if;
+    return v_kimlik;
   end if;
 
-  select kod, ad, departman into v_kod, v_ad, v_dep from kaptan
-   where lower(kod) = v_k and aktif
-     and pin = extensions.crypt(coalesce(p_pin,''), pin);
-
-  if v_ad is null then
-    insert into kaptan_deneme (kod) values (v_k);
-    return jsonb_build_object('ok', false, 'hata', 'Kaptan kodu veya PIN hatali');
-  end if;
-
+  select kod into v_kod from kaptan where lower(kod) = v_k;
   delete from kaptan_deneme where kod = v_k;      -- başarılı giriş sayacı sıfırlar
-  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_ad,
-    'departman', coalesce(v_dep,'hepsi'));
+  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_kimlik->>'ad',
+    'departman', v_kimlik->>'departman');
 end $$;
 
 -- Admin: kaptan listesi (PIN yok)
@@ -1051,19 +1097,14 @@ end $$;
 -- Kaptan KENDİ şifresini değiştirir: eski PIN'i bilmek yeterli (admin şifresi GEREKMEZ).
 create or replace function public.kaptan_sifre_degistir(p_kod text, p_eski_pin text, p_yeni_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_var boolean;
+declare v_kimlik jsonb;
 begin
   if coalesce(p_yeni_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'Yeni PIN 3-12 haneli sayi olmali'; end if;
-  select true into v_var from kaptan
-   where lower(kod) = lower(coalesce(p_kod,'')) and aktif
-     and pin = extensions.crypt(coalesce(p_eski_pin,''), pin);
-  if v_var is null then
-    -- kaptan_giris kilitlendiğinde saldırgan buraya kayabilir; aynı kilit burada da geçerli.
-    if kaptan_kilitli(p_kod) then
-      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
-    end if;
-    raise exception 'Eski PIN hatali';
-  end if;
+  -- kaptan_giris kilitlendiğinde saldırgan buraya kayabilir; aynı kilit burada da
+  -- geçerli — ve artık başarısız deneme buradan da sayaca yazılır.
+  v_kimlik := kaptan_dogrula(p_kod, p_eski_pin);
+  -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+  if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
   update kaptan set pin = extensions.crypt(p_yeni_pin, extensions.gen_salt('bf', 10))
    where lower(kod) = lower(coalesce(p_kod,''));
   return jsonb_build_object('ok', true);
@@ -1079,16 +1120,22 @@ end $$;
 create or replace function public.bekleyen_siparisler(
   p_outlet_kod text, p_bolum text, p_kaptan_kod text, p_kaptan_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_tarih date := (now() at time zone 'Europe/Istanbul')::date;
+declare
+  v_tarih date := (now() at time zone 'Europe/Istanbul')::date;
+  v_kimlik jsonb; v_tur text;
 begin
-  if not exists (select 1 from kaptan
-                  where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
-                    and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin))
-  then
-    if kaptan_kilitli(p_kaptan_kod) then
-      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
-    end if;
-    raise exception 'Kullanici girisi gerekli';
+  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+  if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
+
+  -- YATAY YETKİ: eskiden yalnızca PIN doğrulanıyor, p_outlet_kod hiç
+  -- denetlenmiyordu — geçerli PIN'i olan HERHANGİ bir kaptan, HERHANGİ bir
+  -- birimin günlük siparişlerini kalem detayıyla okuyabiliyordu. Kural artık
+  -- siparis_gonder / siparis_geri_cagir ile aynı: departman eşleşmeli.
+  select tur into v_tur from outletler where kod = p_outlet_kod;
+  if v_tur is null then raise exception 'Gecersiz outlet'; end if;
+  if not kaptan_birim_yetkili(v_kimlik->>'departman', v_tur) then
+    raise exception 'Bu birime yetkiniz yok';
   end if;
 
   return coalesce((
@@ -1113,18 +1160,14 @@ create or replace function public.siparis_geri_cagir(
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_ad text; v_dep text; v_tur text; v_kalemler jsonb;
-  v_tarih date; v_outlet text;
+  v_tarih date; v_outlet text; v_kimlik jsonb;
   v_bugun date := (now() at time zone 'Europe/Istanbul')::date;
 begin
-  select ad, departman into v_ad, v_dep from kaptan
-   where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
-     and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
-  if v_ad is null then
-    if kaptan_kilitli(p_kaptan_kod) then
-      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
-    end if;
-    raise exception 'Kullanici girisi gerekli';
-  end if;
+  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+  if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
+  v_ad  := v_kimlik->>'ad';
+  v_dep := v_kimlik->>'departman';
 
   select tarih, outlet_kod into v_tarih, v_outlet
     from siparisler where siparis_no = p_siparis_no;
@@ -1160,21 +1203,18 @@ create or replace function public.siparis_teslim(
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_ad text; v_dep text; v_tur text; v_durum text; v_tarih date; v_outlet text;
+  v_kimlik jsonb;
   v_bugun date := (now() at time zone 'Europe/Istanbul')::date;
 begin
   if coalesce(p_durum,'') not in ('alindi','itiraz') then
     raise exception 'Gecersiz teslim durumu';
   end if;
 
-  select ad, departman into v_ad, v_dep from kaptan
-   where lower(kod) = lower(coalesce(p_kaptan_kod,'')) and aktif
-     and pin = extensions.crypt(coalesce(p_kaptan_pin,''), pin);
-  if v_ad is null then
-    if kaptan_kilitli(p_kaptan_kod) then
-      raise exception 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.';
-    end if;
-    raise exception 'Kullanici girisi gerekli';
-  end if;
+  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+  if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
+  v_ad  := v_kimlik->>'ad';
+  v_dep := v_kimlik->>'departman';
 
   select durum, tarih, outlet_kod into v_durum, v_tarih, v_outlet
     from siparisler where siparis_no = p_siparis_no;

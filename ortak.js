@@ -61,6 +61,19 @@ function listeKimlik(kod, bolum) {
   return bolum ? kod + "|" + bolum : kod;
 }
 
+/* Kimlik hatası artık exception DEĞİL, {ok:false, hata} nesnesi olarak döner.
+   Sebep: sunucuda başarısız PIN denemesi kaptan_deneme'ye yazılıyor; raise
+   exception transaction'ı geri alır ve o kayıt da silinirdi (bkz. kurulum.sql
+   kaptan_dogrula notu). Dolayısıyla PIN alan HER RPC çağrısı dönen değeri
+   bu süzgeçten geçirmeli — yoksa hata sessizce "veri" sanılır.
+   Dizi dönen fonksiyonlarda (katalog_getir, stok_gizli_kodlar,
+   bekleyen_siparisler) nesne gelmesi zaten kimlik hatası demektir. */
+function rpcKimlikHatasi(data) {
+  return (data && !Array.isArray(data) && typeof data === "object" && data.ok === false)
+    ? (data.hata || "Yetki gerekli")
+    : null;
+}
+
 // Bir listenin ürünlerini buluttan çeker. Bulut boşsa/ulaşılamazsa null döner
 // Bulut katalogu. Kimlik ŞART (kaptan PIN'i ya da admin şifresi).
 // kimlik = {kod, pin} (kaptan) veya {sifre} (admin).
@@ -76,6 +89,8 @@ async function katalogGetir(liste, kimlik) {
       ({ data, error } = await SB.rpc("katalog_getir", { p_liste: liste }));   // eski imza
     }
     if (error) throw error;
+    const kh = rpcKimlikHatasi(data);
+    if (kh) throw new Error(kh);
     return (Array.isArray(data) && data.length) ? data : null;
   } catch (e) {
     console.error("katalog_getir:", e.message || e);
@@ -158,6 +173,8 @@ async function stokGizliYukle(kaptan) {
     const { data, error } = await SB.rpc("stok_gizli_kodlar",
       { p_kaptan_kod: kaptan.kod, p_kaptan_pin: kaptan.pin });
     if (error) throw error;
+    const kh = rpcKimlikHatasi(data);
+    if (kh) throw new Error(kh);
     return new Set(data || []);
   } catch (e) {
     console.error("stok_gizli_kodlar:", e.message || e);
