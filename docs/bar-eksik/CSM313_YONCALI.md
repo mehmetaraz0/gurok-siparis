@@ -1,0 +1,22 @@
+# CSM313 — YONCALI
+
+Bar listesinde: **216** · LN raporunda: **221**
+
+## LN'de var, bar listesinde YOK — 5 kalem
+
+Eklemek istediklerini `[x]` yap.
+
+
+### GNL07 HIJYEN VE SAGLIK MALZEMELERI
+
+- [ ] `GNL07000038` — DEODORANT (ADET) · grup: HIJYEN
+- [ ] `GNL07000017` — MAKAS PANSUMAN (ADET) · grup: HIJYEN
+
+### GNL18 TEMIZLIK MALZEMELERI
+
+- [ ] `GNL18000321` — SOFTCARE ALCOPLUS H500 1, (ADET) · grup: TEMIZLIK & DETERJAN
+
+### ICB07 IMPORT ALKOLLU ICECEKLER
+
+- [ ] `ICB07000332` — CIN BOMBAY SAPPHIRE 100 C (SISE) · grup: CINLER
+- [ ] `ICB07000331` — SAFARI 100 CL (SISE) · grup: LIKORLER & APERITIFLER
