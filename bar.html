@@ -83,6 +83,7 @@ let C = null;        // seçili outlet
 let kirli = false;   // gönderilmemiş değişiklik var mı
 let siparisId = null; // idempotency: bu sipariş denemesinin istemci kimliği
 let GIZLI = new Set(); // stoğu 0/negatif → listede gizlenecek kodlar
+let BULUT_KATALOG = false;  // bulut katalogu yüklendi mi (min sınırları oradan gelir)
 // NOT: eski outlet-PIN akisi kaldirildi; kimlik KAPTAN uzerinden dogrulanir.
 let KAPTAN = null;     // {kod, ad, pin} — bar girişi kaptan kimliği (mutfakta null)
 
@@ -219,9 +220,16 @@ async function birimAc(birim) {
     kisaKod(C.c) + " — " + C.n + (C.bl ? " · " + C.bl : "");
   document.getElementById("lp").innerHTML = '<div class="em">Yükleniyor...</div>';
 
-  // Listeyi buluttan çek; bulut boş/erişilemezse gömülü liste kullanılır.
+  /* Listeyi buluttan çek; bulut boş/erişilemezse gömülü liste kullanılır.
+
+     Minimum sipariş miktarı (i.min) YALNIZCA bulut katalogunda var. Gömülü
+     listeye düşülünce ekrandaki "en az N" etiketleri ve girişteki kırmızı
+     işaret kaybolur — kullanıcı sınırı göremez. Sipariş yine reddedilir
+     (siparis_gonder sunucuda "Minimum siparis miktarinin altinda" hatası
+     veriyor), ama bunu gönderdikten sonra öğrenir. En azından haberi olsun. */
   const bulut = await katalogGetir(anahtar(), KAPTAN);
   if (bulut) C = { ...C, i: bulut };
+  BULUT_KATALOG = !!bulut;
 
   GIZLI = await stokGizliYukle(KAPTAN);   // stoğu biten ürünleri gizle
   yukle();
@@ -485,16 +493,40 @@ async function siparisGeriCagir(no, duzelt) {
 
     makbuzSil(anahtar(), no);        // yerel makbuzdan da düş
     if (duzelt && data && Array.isArray(data.kalemler)) {
+      /* Ekrana KAPTANIN KENDİ talebi (el.m) geri yüklenir, deponun düşürdüğü
+         miktar (el.o) DEĞİL.
+
+         Geri çağırma yalnız 'talep' durumunda mümkün (siparis_geri_cagir
+         atomik update'i), depo ise 'talep' aşamasında da miktar düşürebiliyor
+         (depo_kalem_guncelle yalnız 'onaylandi'/'iptal' engelliyor). Eskiden
+         el.o varsa o tercih ediliyordu: kaptan Düzelt'e bastığında ekrana
+         deponun düşürdüğü miktar geliyor, yeniden gönderince talebi sessizce
+         küçülüyordu.
+
+         Deponun önerisi yok sayılmaz ama kaptanın yerine karar vermez —
+         kaç kalemde farklı miktar önerildiği bildirilir. */
       const q = {};
+      const depoFarki = [];
       data.kalemler.forEach(el => {
-        const m = (el.o === undefined || el.o === null) ? Number(el.m) : Number(el.o);
-        if (el.k && m > 0) q[el.k] = m;
+        const istenen = Number(el.m);
+        if (!el.k || !(istenen > 0)) return;
+        q[el.k] = istenen;
+        const depo = (el.o === undefined || el.o === null) ? null : Number(el.o);
+        if (depo !== null && depo !== istenen) {
+          depoFarki.push((el.a || el.k) + ": " + istenen + " → " + depo);
+        }
       });
       Q[anahtar()] = miktarHaritasiTemizle(q);
       kirli = true;
       taslakYaz();
       rl(); us();
-      durum("hata", "⚠ " + no + " geri çağrıldı — düzeltip yeniden gönderin");
+      durum("hata", "⚠ " + no + " geri çağrıldı — düzeltip yeniden gönderin"
+        + (depoFarki.length ? ` (depo ${depoFarki.length} kalemde farklı miktar önermişti)` : ""));
+      if (depoFarki.length) {
+        alert("Kendi talebiniz ekrana yüklendi.\n\nDepo şu kalemlerde farklı miktar "
+          + "önermişti:\n\n" + depoFarki.join("\n")
+          + "\n\nGerekiyorsa elle düzeltip gönderin.");
+      }
     } else {
       durum("yok", no + " iptal edildi");
     }
@@ -691,6 +723,9 @@ async function gonder() {
   }
 
   if (!confirm(kalemler.length + " kalemlik sipariş depoya gönderilecek.\n\n"
+             + (BULUT_KATALOG ? "" : "⚠ Güncel katalog yüklenemedi; minimum sipariş\n"
+                 + "sınırları ekranda gösterilemiyor. Sınırın altındaki kalem\n"
+                 + "varsa sunucu siparişi reddedecektir.\n\n")
              + "Gönderdikten sonra listeniz sıfırlanır, sipariş depoda kalır.\n"
              + "Gün içinde istediğiniz kadar yeni sipariş gönderebilirsiniz.\n\nGönderilsin mi?")) {
     return;
