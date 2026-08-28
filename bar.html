@@ -170,9 +170,11 @@ async function kaptanSifreDegistir() {
   if (yeni2 === null) return;
   if (y !== yeni2.trim()) { alert("İki PIN aynı değil, tekrar deneyin."); return; }
   try {
-    const { error } = await SB.rpc("kaptan_sifre_degistir",
+    const { data, error } = await SB.rpc("kaptan_sifre_degistir",
       { p_kod: KAPTAN.kod, p_eski_pin: KAPTAN.pin, p_yeni_pin: y });
     if (error) throw error;
+    const kh = rpcKimlikHatasi(data);
+    if (kh) throw new Error(kh);
     KAPTAN.pin = y;
     sessionStorage.setItem("gurok_kaptan_pin", y);
     alert("Şifreniz değiştirildi.");
@@ -312,9 +314,16 @@ function yukle() {
 
   const taslak = taslakOku(anahtar());
   if (taslak && Object.keys(taslak.q).length) {
-    Q[anahtar()] = miktarHaritasiTemizle(taslak.q);
+    const temiz = miktarHaritasiTemizle(taslak.q);
+    // Taslak dünden kalmış olabilir; o gün stokta olan ürün bugün bitmiş olabilir.
+    // Bunları sessizce düşürmek yerine kullanıcıya söyle (aksi hâlde gönderdiğini
+    // sandığı kalem listede yok diye kaybolur).
+    const dusen = Object.keys(temiz).filter(k => GIZLI.has(k));
+    dusen.forEach(k => { delete temiz[k]; });
+    Q[anahtar()] = temiz;
     kirli = true;
-    durum("hata", "⚠ Gönderilmemiş taslağınız var");
+    durum("hata", "⚠ Gönderilmemiş taslağınız var"
+      + (dusen.length ? ` — stokta olmayan ${dusen.length} kalem çıkarıldı` : ""));
   } else {
     durum("yok", "Yeni sipariş");
   }
@@ -356,8 +365,14 @@ async function makbuzCiz() {
     try {
       const { data, error } = await SB.rpc("bekleyen_siparisler", {
         p_outlet_kod: C.c, p_bolum: C.bl, p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
-      if (!error && Array.isArray(data)) BEKLEYEN = data;
-    } catch (e) { /* çevrimdışı — yerel makbuz gösterilir */ }
+      if (error) throw error;
+      // Kimlik hatası dizi değil {ok:false} döner — sessizce "çevrimdışı" sanılmasın.
+      const kh = rpcKimlikHatasi(data);
+      if (kh) throw new Error(kh);
+      if (Array.isArray(data)) BEKLEYEN = data;
+    } catch (e) {
+      console.error("bekleyen_siparisler:", e.message || e);  // çevrimdışı → yerel makbuz
+    }
   }
 
   const liste = BEKLEYEN || yerel.map(x => ({ siparis_no: x.no, saat: x.saat, kalem: x.kalem }));
@@ -439,10 +454,12 @@ async function siparisTeslim(no, durum) {
     if (not === null) return;                 // iptal
   } else if (!confirm(no + " teslim alındı olarak işaretlenecek. Devam?")) return;
   try {
-    const { error } = await SB.rpc("siparis_teslim", {
+    const { data, error } = await SB.rpc("siparis_teslim", {
       p_siparis_no: no, p_durum: durum, p_not: not,
       p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
     if (error) throw error;
+    const kh = rpcKimlikHatasi(data);
+    if (kh) throw new Error(kh);
     ACIK_TESLIM = null;
     await makbuzCiz();
   } catch (e) {
@@ -463,6 +480,8 @@ async function siparisGeriCagir(no, duzelt) {
     const { data, error } = await SB.rpc("siparis_geri_cagir",
       { p_siparis_no: no, p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
     if (error) throw error;
+    const kh = rpcKimlikHatasi(data);
+    if (kh) throw new Error(kh);
 
     makbuzSil(anahtar(), no);        // yerel makbuzdan da düş
     if (duzelt && data && Array.isArray(data.kalemler)) {
@@ -642,10 +661,16 @@ function clr() {
 /* ================= Sipariş gönderimi ================= */
 
 // Ekranda görülen sırayla döner; Excel satır sırası da bu olur.
+//
+// GIZLI süzgeci burada da ŞART. rl() yalnızca ÇİZİMİ süzüyordu; bu fonksiyon ham
+// C.i üzerinden çalıştığı için stoğu biten bir ürün ekranda görünmediği hâlde
+// özete ve gönderilen siparişe giriyordu. Taslaklar localStorage'da kalıcı
+// olduğundan (taslakYaz) dün miktar girilmiş bir ürün bugün stoğu bitse bile
+// sessizce sipariş edilebiliyordu.
 function seciliKalemler() {
   if (!C) return [];
   const q = Q[anahtar()] || {};
-  const secilen = C.i.filter(i => q[i.k]);
+  const secilen = C.i.filter(i => q[i.k] && !GIZLI.has(i.k));
   // Ekranda hangi sırayla görünüyorsa Excel'e de o sırayla gider.
   return grupluSirala(secilen, C.bl ? mutfakKatIndex : undefined)
     .map(i => ({ k: i.k, a: i.a, b: i.b, g: i.g, m: q[i.k] }));
@@ -686,6 +711,8 @@ async function gonder() {
       p_kaptan_pin: KAPTAN ? KAPTAN.pin : null
     });
     if (error) throw error;
+    const kh = rpcKimlikHatasi(data);
+    if (kh) throw new Error(kh);
 
     // Gönderim başarılı: makbuza yaz, ekranı sıfırla
     makbuzEkle(anahtar(), { no: data.siparis_no, saat: data.saat, kalem: data.kalem });

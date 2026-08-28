@@ -147,6 +147,8 @@ async function listeYukle() {
       ({ data, error } = await SB.rpc("katalog_getir", { p_liste: LISTE }));
     }
     if (error) throw error;
+    const kh = rpcKimlikHatasi(data);
+    if (kh) throw new Error(kh);
     KALEMLER = data || [];
     cizListe();
   } catch (e) {
