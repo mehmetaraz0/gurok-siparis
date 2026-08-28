@@ -361,21 +361,26 @@ begin
 end $$;
 
 -- BAR/MUTFAK → sipariş gönder (SAĞLAMLAŞTIRILMIŞ KÖPRÜ)
---  • outlet allowlist  • PIN (varsa)  • ad'ı SUNUCU belirler
+--  • outlet allowlist  • kaptan kimliği  • ad'ı SUNUCU belirler
 --  • kalem kodu (seed'liyse) listede olmalı  • günlük hız sınırı
 drop function if exists public.siparis_gonder(text, text, jsonb);
 drop function if exists public.siparis_gonder(text, text, jsonb, text);
 drop function if exists public.siparis_gonder(text, text, jsonb, text, text);
 drop function if exists public.siparis_gonder(text, text, jsonb, text, text, text);
+-- p_pin taşıyan 8 parametreli imza kaldırıldı (aşağıdaki nota bakın).
+drop function if exists public.siparis_gonder(text, text, jsonb, text, text, text, text, text);
 
+-- NOT: p_pin parametresi kaldırıldı. Outlet-PIN modelinden kalmıştı; kaptan
+-- modeline geçildiğinde gövdede kullanılmayı bıraktı ama imzada durmaya devam
+-- etti. Çağırana "PIN de doğrulanıyor" izlenimi veriyordu; hiçbir istemci
+-- göndermiyordu. Kimlik yalnızca p_kaptan_kod + p_kaptan_pin ile doğrulanır.
 create or replace function public.siparis_gonder(
   p_outlet_kod  text,
   p_outlet_ad   text,               -- YOK SAYILIR (sunucu outletler'den alır)
   p_kalemler    jsonb,
   p_bolum       text default null,
   p_istemci_id  text default null,
-  p_pin         text default null,
-  p_kaptan_kod  text default null,  -- bar: kaptan kimliği
+  p_kaptan_kod  text default null,  -- kişi kimliği (bar + mutfak)
   p_kaptan_pin  text default null
 )
 returns jsonb
@@ -1116,7 +1121,10 @@ end $$;
 -- Depo henüz ONAYLAMADIYSA kaptan kendi biriminin siparişini geri çağırabilir:
 -- düzeltip yeniden gönderir ya da tamamen iptal eder. Kayıt silinmez, iz kalır.
 
--- O birimin BUGÜNKÜ siparişleri (iptal olanlar dönmez)
+-- O birimin BUGÜNKÜ siparişleri. İPTAL EDİLENLER DE DÖNER: kaptan ekranı
+-- iptal edilmiş siparişi "kim iptal etti" bilgisiyle gösteriyor, o yüzden
+-- durum süzgeci bilerek yok. (Eski yorum "iptal olanlar dönmez" diyordu ama
+-- sorguda öyle bir filtre hiç olmadı.)
 create or replace function public.bekleyen_siparisler(
   p_outlet_kod text, p_bolum text, p_kaptan_kod text, p_kaptan_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
@@ -1245,7 +1253,7 @@ revoke all on all functions in schema public from public;
 revoke execute on function public.outlet_giris(text, text) from anon;
 grant execute on function public.katalog_getir(text, text, text, text)              to anon;
 grant execute on function public.stok_gizli_kodlar(text, text)                        to anon;
-grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text, text) to anon;
+grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text)       to anon;
 grant execute on function public.bekleyen_siparisler(text, text, text, text)          to anon;
 grant execute on function public.siparis_geri_cagir(text, text, text)                 to anon;
 grant execute on function public.siparis_teslim(text, text, text, text, text)         to anon;
