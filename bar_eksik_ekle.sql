@@ -1,6 +1,13 @@
 -- GUROK: BAR_EKSIK_URUNLER -> bulut katalog. Yalnızca bulutta ZATEN seed'li
 -- barlara eklenir (seed yoksa veri.js kullanılır; yarım liste ezilmesin diye).
--- on conflict: aynı kalem tekrar eklenmez. 401/402/403 app'te bar değil -> yok.
+-- on conflict: aynı kalem tekrar eklenmez.
+--
+-- TARİHÇE: bu script yazıldığında çay ocakları (CSM401/402/403) uygulamada
+-- tanımlı değildi, o yüzden kapsam dışıydı. Sonradan cay_ocaklari_outlet.sql
+-- ile 'bar' olarak eklendiler ve kurulum.sql outlet listesinde de yer alıyorlar
+-- (bkz. kurulum.sql, outlet tohumu). Bu script tek seferlik bir aktarımdır,
+-- yeniden çalıştırılırsa o üç birim yine kapsam dışı kalır — kalemleri
+-- veri.js üzerinden gelir.
 insert into public.katalog (liste, kod, ad, birim, grup, sira)
 select v.liste, v.kod, v.ad, v.birim, v.grup,
        (select coalesce(max(k2.sira),0) from katalog k2 where k2.liste = v.liste)

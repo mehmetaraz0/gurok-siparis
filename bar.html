@@ -132,6 +132,7 @@ async function kaptanGiris() {
 
 // Giriş sonrası birim seçim ekranı: barlar (D) + mutfaklar (M) birlikte.
 function birimSecimGoster() {
+  makbuzTazelemeDurdur();   // eski birim için sorgu atmaya devam etmesin
   document.getElementById("kilit").style.display = "none";
   document.getElementById("bolumEkran").style.display = "none";
   document.getElementById("ana").style.display = "none";
@@ -183,6 +184,7 @@ async function kaptanSifreDegistir() {
 }
 
 function kaptanaCik() {
+  makbuzTazelemeDurdur();   // çıkışta PIN'li sorgu atmaya devam etmesin
   KAPTAN = null;
   ["gurok_kaptan_kod", "gurok_kaptan_pin", "gurok_kaptan_ad", "gurok_kaptan_dep"].forEach(k => sessionStorage.removeItem(k));
   document.getElementById("barEkran").style.display = "none";
@@ -235,6 +237,31 @@ async function birimAc(birim) {
   yukle();
   rl();
   us();
+  makbuzTazelemeBaslat();
+}
+
+/* ================= Makbuz otomatik tazeleme =================
+   Depo bir siparişi onayladığında/iptal ettiğinde kaptanın makbuzundaki durum
+   kendiliğinden değişmiyordu; sayfayı yenilemek gerekiyordu.
+
+   makbuzCiz() yalnızca makbuz kutusunu çizer — ürün listesine ve girilen
+   miktarlara (Q) dokunmaz, o yüzden tazelemek güvenlidir. İki istisna:
+   teslim formu açıkken (kullanıcı not yazıyor olabilir) ve sekme arka
+   plandayken tazelenmez. */
+let makbuzZamanlayici = null;
+
+function makbuzTazelemeBaslat() {
+  makbuzTazelemeDurdur();
+  makbuzZamanlayici = setInterval(() => {
+    if (!C || !KAPTAN) return;
+    if (ACIK_TESLIM) return;                          // form açık — ezme
+    if (document.visibilityState !== "visible") return; // arka planda boşuna sorgulama
+    makbuzCiz();
+  }, 30000);
+}
+
+function makbuzTazelemeDurdur() {
+  if (makbuzZamanlayici) { clearInterval(makbuzZamanlayici); makbuzZamanlayici = null; }
 }
 
 // Miktar/taslak/makbuz anahtarı: bölüm varsa ona da bağlı
