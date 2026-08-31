@@ -74,20 +74,11 @@ function rpcKimlikHatasi(data) {
     : null;
 }
 
-// Bir listenin ürünlerini buluttan çeker. Bulut boşsa/ulaşılamazsa null döner
-// Bulut katalogu. Kimlik ŞART (kaptan PIN'i ya da admin şifresi).
-// kimlik = {kod, pin} (kaptan) veya {sifre} (admin).
-// SQL henüz uygulanmamış veritabanlarında yeni imza bulunamaz; o durumda eski
-// tek-argümanlı çağrıya düşülür (geçiş penceresi; SQL uygulanınca bu dal ölür).
-async function katalogGetir(liste, kimlik) {
-  const arg = { p_liste: liste };
-  if (kimlik && kimlik.kod && kimlik.pin) { arg.p_kaptan_kod = kimlik.kod; arg.p_kaptan_pin = kimlik.pin; }
-  if (kimlik && kimlik.sifre) arg.p_sifre = kimlik.sifre;
+// Bulut katalogu. OTURUM ŞART: açık oturumun token'ı ile çağrılır (kaptan ya da admin).
+// Bulut boşsa/ulaşılamazsa null döner.
+async function katalogGetir(liste) {
   try {
-    let { data, error } = await SB.rpc("katalog_getir", arg);
-    if (error && /does not exist|Could not find/i.test(error.message || "")) {
-      ({ data, error } = await SB.rpc("katalog_getir", { p_liste: liste }));   // eski imza
-    }
+    const { data, error } = await SB.rpc("katalog_getir", { p_liste: liste, ...yetkiArg() });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
@@ -167,11 +158,10 @@ function kumParse(satirlar) {
 
 // Bar/mutfak: stoğu 0/negatif olan kod kümesi. Stok modülü yoksa boş küme
 // döner (hiçbir ürün gizlenmez), böylece sistem eskisi gibi çalışmaya devam eder.
-async function stokGizliYukle(kaptan) {
-  if (!kaptan || !kaptan.kod || !kaptan.pin) return new Set();   // kimlik yoksa sorgulama
+async function stokGizliYukle() {
+  if (!TOKEN) return new Set();                                  // oturum yoksa sorgulama
   try {
-    const { data, error } = await SB.rpc("stok_gizli_kodlar",
-      kaptanArg(kaptan));
+    const { data, error } = await SB.rpc("stok_gizli_kodlar", kaptanArg());
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
@@ -200,54 +190,46 @@ function miktarHaritasiTemizle(obj) {
 
 
 /* ---------- Oturum token'ı ----------
-   Şifre/PIN artık yalnızca giriş çağrısında gider; sonrasında kısa ömürlü token
-   kullanılır. Token sunucuda iptal edilebilir ve süresi dolar.
-   GEÇİŞ: veritabanı henüz güncellenmediyse giriş fonksiyonu bulunamaz; o durumda
-   eski şifre/PIN parametrelerine düşülür (TOKEN_MODU=false). SQL uygulandıktan
-   sonra bu dal ölür ve temizlenebilir. */
+   Şifre/PIN YALNIZCA giriş çağrısında gider; sonrasındaki her istek kısa ömürlü
+   token ile yapılır. Token sunucuda iptal edilebilir ve süresi dolar.
+   TARAYICIDA ŞİFRE/PIN HİÇBİR ZAMAN SAKLANMAZ (M-1).
+   Not: token öncesi "eski şifre parametresi" geçiş yolu 1 Eyl 2026'da silindi
+   (denetim N-2). Veritabanında eski imzalar zaten drop edilmiş durumda. */
 let TOKEN = null;
-let TOKEN_MODU = false;
-
-// RPC'nin veritabanında bulunmadığını anlatan hata mı?
-function rpcYok(error) {
-  return !!error && /does not exist|Could not find/i.test(error.message || "");
-}
 
 // Depo/admin çağrıları için yetki argümanı
-function yetkiArg(eskiSifre) {
-  return TOKEN_MODU ? { p_token: TOKEN } : { p_sifre: eskiSifre };
+function yetkiArg() {
+  return { p_token: TOKEN };
 }
 
 // Kaptan çağrıları için yetki argümanı
-function kaptanArg(kaptan) {
-  if (TOKEN_MODU && TOKEN) return { p_token: TOKEN };
-  return kaptan ? { p_kaptan_kod: kaptan.kod, p_kaptan_pin: kaptan.pin } : {};
+function kaptanArg() {
+  return { p_token: TOKEN };
 }
 
-// Şifreyle giriş: önce token modeli denenir, yoksa eski yola düşülür.
-//   girisRpc : "depo_giris" | "admin_giris"
-//   eskiDogrula: token yoksa şifreyi doğrulayan geri-uyum fonksiyonu (async)
+// Sunucu mesajları ASCII geliyor (kurulum.sql'de Türkçe karakter yok).
+// Kilit mesajını ayırt edip ekrana düzgün Türkçe yazar.
+function girisHatasiTr(h, varsayilan) {
+  if (/cok fazla/i.test(String(h || "")))
+    return "Çok fazla hatalı deneme. 15 dakika sonra tekrar deneyin.";
+  return varsayilan || "Şifre hatalı.";
+}
+
+// Şifreyle giriş (depo/admin). girisRpc: "depo_giris" | "admin_giris"
 // Dönüş: { ok, hata }
-async function sifreIleGiris(girisRpc, sifre, eskiDogrula) {
+async function sifreIleGiris(girisRpc, sifre) {
   try {
     const { data, error } = await SB.rpc(girisRpc, { p_sifre: sifre });
-    if (!error && data && data.ok && data.token) {
-      TOKEN = data.token; TOKEN_MODU = true;
-      return { ok: true };
-    }
-    if (!error && data && data.ok === false) return { ok: false, hata: data.hata || "Şifre hatalı." };
-    if (!rpcYok(error)) return { ok: false, hata: "Şifre hatalı." };
+    if (error) return { ok: false, hata: "Bağlantı kurulamadı." };
+    if (data && data.ok && data.token) { TOKEN = data.token; return { ok: true }; }
+    return { ok: false, hata: girisHatasiTr(data && data.hata) };
   } catch (e) { return { ok: false, hata: "Bağlantı kurulamadı." }; }
-  // Eski veritabanı: token yok
-  TOKEN = null; TOKEN_MODU = false;
-  return await eskiDogrula();
 }
 
-// Token'ı sekme oturumunda sakla. TOKEN MODUNDA ŞİFRE/PIN SAKLANMAZ:
-// süreli ve sunucudan iptal edilebilir token, düz şifreden çok daha güvenli.
+// Token'ı sekme oturumunda sakla.
 function tokenKaydet(anahtar) {
   try {
-    if (TOKEN_MODU && TOKEN) sessionStorage.setItem(anahtar + "_token", TOKEN);
+    if (TOKEN) sessionStorage.setItem(anahtar + "_token", TOKEN);
     else sessionStorage.removeItem(anahtar + "_token");
   } catch (e) {}
 }
@@ -258,13 +240,13 @@ function tokenGeriYukle(anahtar) {
     if (!oturumTaze(anahtar)) return false;
     const t = sessionStorage.getItem(anahtar + "_token");
     if (!t) return false;
-    TOKEN = t; TOKEN_MODU = true; return true;
+    TOKEN = t; return true;
   } catch (e) { return false; }
 }
 
 async function oturumuKapat() {
-  if (TOKEN_MODU && TOKEN) { try { await SB.rpc("oturum_iptal", { p_token: TOKEN }); } catch (e) {} }
-  TOKEN = null; TOKEN_MODU = false;
+  if (TOKEN) { try { await SB.rpc("oturum_iptal", { p_token: TOKEN }); } catch (e) {} }
+  TOKEN = null;
 }
 /* ---------- Oturum süresi ----------
    Paylaşılan tablette sekme hiç kapanmıyor; damgasız oturum sabah giren kişinin

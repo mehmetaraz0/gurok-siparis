@@ -114,19 +114,19 @@ async function kaptanGiris() {
   if (!pin) { err.textContent = "PIN girin."; return; }
   try {
     const { data, error } = await SB.rpc("kaptan_giris", { p_kod: kod, p_pin: pin });
-    // Eski DB exception atar (error dolu); yeni DB {ok:false, hata} döner.
+    // Sunucu hatalı girişte exception atmaz, {ok:false, hata} döner (sayaç
+    // commit olsun diye). error dolu ise gerçekten bağlantı/sunucu sorunu var.
     if (error) { err.textContent = "Kaptan veya PIN hatalı."; return; }
     if (!data || data.ok === false || !data.ad) {
-      err.textContent = (data && data.hata) ? data.hata : "Kaptan veya PIN hatalı.";
+      err.textContent = girisHatasiTr(data && data.hata, "Kullanıcı adı veya PIN hatalı.");
       return;
     }
-    // Yeni DB token döner; eski DB dönmez → kaptanArg eski PIN yoluna düşer.
-    if (data.token) { TOKEN = data.token; TOKEN_MODU = true; }
-    KAPTAN = { kod: kod, ad: data.ad, pin: pin, departman: data.departman || "hepsi", token: data.token || null };
+    if (!data.token) { err.textContent = "Sunucu oturum açamadı."; return; }
+    TOKEN = data.token;
+    // PIN nesnede TUTULMAZ: her istek token ile gidiyor (M-1).
+    KAPTAN = { kod: kod, ad: data.ad, departman: data.departman || "hepsi" };
     sessionStorage.setItem("gurok_kaptan_kod", kod);
-    // Token modunda PIN SAKLANMAZ (M-1); eski DB'de fallback için gerekli.
-    if (TOKEN_MODU) sessionStorage.removeItem("gurok_kaptan_pin");
-    else sessionStorage.setItem("gurok_kaptan_pin", pin);
+    sessionStorage.removeItem("gurok_kaptan_pin");   // eski sürümden kalmış olabilir
     tokenKaydet("gurok_kaptan");
     sessionStorage.setItem("gurok_kaptan_ad", data.ad);
     sessionStorage.setItem("gurok_kaptan_dep", KAPTAN.departman);
@@ -172,6 +172,14 @@ function mutfakSec(m) {
 
 async function kaptanSifreDegistir() {
   if (!KAPTAN) return;
+  // Mevcut PIN tarayıcıda SAKLANMIYOR (M-1), kullanıcıdan istenir. Sunucu da
+  // bunu şart koşuyor: açık oturumu ele geçiren biri PIN'i değiştirip hesabı
+  // devralamasın. (Eskiden KAPTAN.pin gönderiliyordu; sayfa yenilendikten sonra
+  //  null olduğu için PIN değiştirme hiç çalışmıyordu.)
+  const eski = prompt("Mevcut PIN'iniz:");
+  if (eski === null) return;                        // iptal
+  const e0 = eski.trim();
+  if (!e0) { alert("Mevcut PIN gerekli."); return; }
   const yeni = prompt("Yeni PIN (en az 6 hane):");
   if (yeni === null) return;                        // iptal
   const y = yeni.trim();
@@ -181,13 +189,15 @@ async function kaptanSifreDegistir() {
   if (y !== yeni2.trim()) { alert("İki PIN aynı değil, tekrar deneyin."); return; }
   try {
     const { data, error } = await SB.rpc("kaptan_sifre_degistir",
-      { ...kaptanArg(KAPTAN), p_eski_pin: KAPTAN.pin, p_yeni_pin: y });
+      { ...kaptanArg(), p_eski_pin: e0, p_yeni_pin: y });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
-    KAPTAN.pin = y;
-    if (!TOKEN_MODU) sessionStorage.setItem("gurok_kaptan_pin", y);
-    alert("Şifreniz değiştirildi.");
+    // Sunucu PIN değişince bu kaptanın TÜM oturumlarını kapatır (çalınmış token
+    // dahil) — elimizdeki token da artık ölü. Kullanıcıyı yeniden aldırıyoruz;
+    // aksi halde sonraki her işlem sessizce "Yetki gerekli" verirdi.
+    alert("Şifreniz değiştirildi. Yeni PIN ile tekrar giriş yapın.");
+    await kaptanaCik();
   } catch (e) { alert("Değiştirilemedi: " + (e.message || "hata")); }
 }
 
@@ -239,11 +249,11 @@ async function birimAc(birim) {
      işaret kaybolur — kullanıcı sınırı göremez. Sipariş yine reddedilir
      (siparis_gonder sunucuda "Minimum siparis miktarinin altinda" hatası
      veriyor), ama bunu gönderdikten sonra öğrenir. En azından haberi olsun. */
-  const bulut = await katalogGetir(anahtar(), KAPTAN);
+  const bulut = await katalogGetir(anahtar());
   if (bulut) C = { ...C, i: bulut };
   BULUT_KATALOG = !!bulut;
 
-  GIZLI = await stokGizliYukle(KAPTAN);   // stoğu biten ürünleri gizle
+  GIZLI = await stokGizliYukle();   // stoğu biten ürünleri gizle
   yukle();
   rl();
   us();
@@ -297,13 +307,10 @@ function barDegistir() {
 (function kaptanOturumGeriYukle() {
   const kod = sessionStorage.getItem("gurok_kaptan_kod");
   const ad  = sessionStorage.getItem("gurok_kaptan_ad");
-  const pin = sessionStorage.getItem("gurok_kaptan_pin");
   const dep = sessionStorage.getItem("gurok_kaptan_dep") || "hepsi";
-  // Önce token: şifre saklanmadan oturum sürer (M-1).
+  // Oturum YALNIZCA token ile sürer; şifre/PIN saklanmaz (M-1).
   if (kod && ad && tokenGeriYukle("gurok_kaptan")) {
-    KAPTAN = { kod, ad, pin: null, departman: dep, token: TOKEN };
-  } else if (kod && ad && pin && oturumTaze("gurok_kaptan")) {
-    KAPTAN = { kod, ad, pin, departman: dep };   // eski DB (fallback)
+    KAPTAN = { kod, ad, departman: dep };
   } else {
     ["gurok_kaptan_kod","gurok_kaptan_pin","gurok_kaptan_ad","gurok_kaptan_dep","gurok_kaptan_zaman","gurok_kaptan_token"]
       .forEach(k => sessionStorage.removeItem(k));   // süresi dolmuş oturum
@@ -412,7 +419,7 @@ async function makbuzCiz() {
   if (C && KAPTAN) {
     try {
       const { data, error } = await SB.rpc("bekleyen_siparisler", {
-        p_outlet_kod: C.c, p_bolum: C.bl, ...kaptanArg(KAPTAN) });
+        p_outlet_kod: C.c, p_bolum: C.bl, ...kaptanArg() });
       if (error) throw error;
       // Kimlik hatası dizi değil {ok:false} döner — sessizce "çevrimdışı" sanılmasın.
       const kh = rpcKimlikHatasi(data);
@@ -504,7 +511,7 @@ async function siparisTeslim(no, durum) {
   try {
     const { data, error } = await SB.rpc("siparis_teslim", {
       p_siparis_no: no, p_durum: durum, p_not: not,
-      ...kaptanArg(KAPTAN) });
+      ...kaptanArg() });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
@@ -526,7 +533,7 @@ async function siparisGeriCagir(no, duzelt) {
   if (!confirm(soru)) return;
   try {
     const { data, error } = await SB.rpc("siparis_geri_cagir",
-      { p_siparis_no: no, ...kaptanArg(KAPTAN) });
+      { p_siparis_no: no, ...kaptanArg() });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
@@ -782,7 +789,7 @@ async function gonder() {
     const { data, error } = await SB.rpc("siparis_gonder", {
       p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler,
       p_bolum: C.bl, p_istemci_id: siparisId,
-      ...kaptanArg(KAPTAN)
+      ...kaptanArg()
     });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
