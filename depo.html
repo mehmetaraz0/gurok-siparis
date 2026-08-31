@@ -170,7 +170,9 @@ let zamanlayici = null;
 
 /* ================= Giriş ================= */
 
-const kayitli = (oturumTaze("gurok_depo") ? sessionStorage.getItem("gurok_depo_sifre") : null);
+// Önce token (şifre saklanmaz); yoksa eski DB için saklanmış şifre.
+const kayitli = tokenGeriYukle("gurok_depo") ? "__token__"
+  : (oturumTaze("gurok_depo") ? sessionStorage.getItem("gurok_depo_sifre") : null);
 if (kayitli) { SIFRE = kayitli; basla(); }
 
 document.getElementById("sifre").addEventListener("keydown", e => {
@@ -196,7 +198,10 @@ async function giris() {
     });
     if (!g.ok) throw new Error(g.hata || "Sifre hatali");
     SIFRE = deger;
-    sessionStorage.setItem("gurok_depo_sifre", deger); oturumDamgala("gurok_depo");
+    oturumDamgala("gurok_depo");
+    // Token modunda şifre SAKLANMAZ (M-1).
+    if (TOKEN_MODU) { sessionStorage.removeItem("gurok_depo_sifre"); tokenKaydet("gurok_depo"); }
+    else sessionStorage.setItem("gurok_depo_sifre", deger);
     basla();
   } catch (e) {
     console.error(e);

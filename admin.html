@@ -85,7 +85,9 @@ let LISTE = null;       // seçili liste kimliği
 let KALEMLER = [];      // seçili listenin kalemleri (ekranda görülen sıra)
 
 /* ---- Giriş ---- */
-const kayitli = (oturumTaze("gurok_admin") ? sessionStorage.getItem("gurok_admin_sifre") : null);
+// Önce token (şifre saklanmaz); yoksa eski DB için saklanmış şifre.
+const kayitli = tokenGeriYukle("gurok_admin") ? "__token__"
+  : (oturumTaze("gurok_admin") ? sessionStorage.getItem("gurok_admin_sifre") : null);
 if (kayitli) { SIFRE = kayitli; basla(); }
 document.getElementById("sifre").addEventListener("keydown", e => { if (e.key === "Enter") giris(); });
 
@@ -100,7 +102,10 @@ async function giris() {
       return error ? { ok: false, hata: (error.message || "").includes("Sifre") ? "Sifre hatali" : "Baglanti" } : { ok: true };
     });
     if (!g.ok) throw new Error(g.hata || "Sifre hatali");
-    SIFRE = d; sessionStorage.setItem("gurok_admin_sifre", d); oturumDamgala("gurok_admin"); basla();
+    SIFRE = d; oturumDamgala("gurok_admin");
+    if (TOKEN_MODU) { sessionStorage.removeItem("gurok_admin_sifre"); tokenKaydet("gurok_admin"); }
+    else sessionStorage.setItem("gurok_admin_sifre", d);
+    basla();
   } catch (e) {
     err.textContent = (e.message || "").includes("Sifre") ? "Şifre hatalı." : "Bağlantı kurulamadı.";
     inp.value = ""; inp.focus();

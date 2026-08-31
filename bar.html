@@ -121,7 +121,10 @@ async function kaptanGiris() {
     if (data.token) { TOKEN = data.token; TOKEN_MODU = true; }
     KAPTAN = { kod: kod, ad: data.ad, pin: pin, departman: data.departman || "hepsi", token: data.token || null };
     sessionStorage.setItem("gurok_kaptan_kod", kod);
-    sessionStorage.setItem("gurok_kaptan_pin", pin);
+    // Token modunda PIN SAKLANMAZ (M-1); eski DB'de fallback için gerekli.
+    if (TOKEN_MODU) sessionStorage.removeItem("gurok_kaptan_pin");
+    else sessionStorage.setItem("gurok_kaptan_pin", pin);
+    tokenKaydet("gurok_kaptan");
     sessionStorage.setItem("gurok_kaptan_ad", data.ad);
     sessionStorage.setItem("gurok_kaptan_dep", KAPTAN.departman);
     oturumDamgala("gurok_kaptan");
@@ -180,7 +183,7 @@ async function kaptanSifreDegistir() {
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
     KAPTAN.pin = y;
-    sessionStorage.setItem("gurok_kaptan_pin", y);
+    if (!TOKEN_MODU) sessionStorage.setItem("gurok_kaptan_pin", y);
     alert("Şifreniz değiştirildi.");
   } catch (e) { alert("Değiştirilemedi: " + (e.message || "hata")); }
 }
@@ -189,7 +192,8 @@ async function kaptanaCik() {
   await oturumuKapat();
   makbuzTazelemeDurdur();   // çıkışta PIN'li sorgu atmaya devam etmesin
   KAPTAN = null;
-  ["gurok_kaptan_kod", "gurok_kaptan_pin", "gurok_kaptan_ad", "gurok_kaptan_dep"].forEach(k => sessionStorage.removeItem(k));
+  ["gurok_kaptan_kod", "gurok_kaptan_pin", "gurok_kaptan_ad", "gurok_kaptan_dep", "gurok_kaptan_token", "gurok_kaptan_zaman"]
+    .forEach(k => sessionStorage.removeItem(k));
   document.getElementById("barEkran").style.display = "none";
   document.getElementById("ana").style.display = "none";
   document.getElementById("kilit").style.display = "";
@@ -292,10 +296,13 @@ function barDegistir() {
   const ad  = sessionStorage.getItem("gurok_kaptan_ad");
   const pin = sessionStorage.getItem("gurok_kaptan_pin");
   const dep = sessionStorage.getItem("gurok_kaptan_dep") || "hepsi";
-  if (kod && ad && pin && oturumTaze("gurok_kaptan")) {
-    KAPTAN = { kod, ad, pin, departman: dep };
+  // Önce token: şifre saklanmadan oturum sürer (M-1).
+  if (kod && ad && tokenGeriYukle("gurok_kaptan")) {
+    KAPTAN = { kod, ad, pin: null, departman: dep, token: TOKEN };
+  } else if (kod && ad && pin && oturumTaze("gurok_kaptan")) {
+    KAPTAN = { kod, ad, pin, departman: dep };   // eski DB (fallback)
   } else {
-    ["gurok_kaptan_kod","gurok_kaptan_pin","gurok_kaptan_ad","gurok_kaptan_dep","gurok_kaptan_zaman"]
+    ["gurok_kaptan_kod","gurok_kaptan_pin","gurok_kaptan_ad","gurok_kaptan_dep","gurok_kaptan_zaman","gurok_kaptan_token"]
       .forEach(k => sessionStorage.removeItem(k));   // süresi dolmuş oturum
   }
 })();

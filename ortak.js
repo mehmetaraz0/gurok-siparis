@@ -243,6 +243,25 @@ async function sifreIleGiris(girisRpc, sifre, eskiDogrula) {
   return await eskiDogrula();
 }
 
+// Token'ı sekme oturumunda sakla. TOKEN MODUNDA ŞİFRE/PIN SAKLANMAZ:
+// süreli ve sunucudan iptal edilebilir token, düz şifreden çok daha güvenli.
+function tokenKaydet(anahtar) {
+  try {
+    if (TOKEN_MODU && TOKEN) sessionStorage.setItem(anahtar + "_token", TOKEN);
+    else sessionStorage.removeItem(anahtar + "_token");
+  } catch (e) {}
+}
+
+// Sekme oturumundan token'ı geri yükle. Döner: token bulundu mu?
+function tokenGeriYukle(anahtar) {
+  try {
+    if (!oturumTaze(anahtar)) return false;
+    const t = sessionStorage.getItem(anahtar + "_token");
+    if (!t) return false;
+    TOKEN = t; TOKEN_MODU = true; return true;
+  } catch (e) { return false; }
+}
+
 async function oturumuKapat() {
   if (TOKEN_MODU && TOKEN) { try { await SB.rpc("oturum_iptal", { p_token: TOKEN }); } catch (e) {} }
   TOKEN = null; TOKEN_MODU = false;
