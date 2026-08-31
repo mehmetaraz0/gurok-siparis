@@ -6,3 +6,6 @@ compatibility_date = "2026-08-31"
 
 [assets]
 directory = "./"
+# Varsayılan davranış /bar.html -> /bar yönlendirmesi yapıyordu. Personelin
+# kayıtlı linkleri .html ile; gereksiz yönlendirme olmasın diye kapatıldı.
+html_handling = "none"
