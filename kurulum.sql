@@ -289,6 +289,7 @@ drop function if exists public.siparis_gonder(text, text, jsonb, text, text, tex
 drop function if exists public.bekleyen_siparisler(text, text, text, text);
 drop function if exists public.siparis_geri_cagir(text, text, text);
 drop function if exists public.siparis_teslim(text, text, text, text, text);
+drop function if exists public.kaptan_sifre_degistir(text, text, text);
 
 -- ===== GİRİŞ FONKSİYONLARI (şifre/PIN yalnızca burada kabul edilir) =====
 -- Hepsi hata durumunda EXCEPTION ATMAZ: {ok:false} döner. Aksi halde deneme
