@@ -1,0 +1,8 @@
+# Cloudflare Workers — statik site (Workers Static Assets).
+# Sunucu tarafı kod YOK; yalnızca dosyalar sunulur. _headers dosyası burada
+# geçerlidir (GitHub Pages özel başlık desteklemiyordu — taşımanın sebebi bu).
+name = "gurok-siparis"
+compatibility_date = "2026-08-31"
+
+[assets]
+directory = "./"

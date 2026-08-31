@@ -1,0 +1,7 @@
+# Web'de yayınlanmayacaklar (repoda kalır, GitHub'dan erişilebilir)
+docs/
+*.sql
+*.md
+.gitattributes
+.assetsignore
+wrangler.toml
