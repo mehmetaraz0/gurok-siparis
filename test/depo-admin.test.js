@@ -78,7 +78,33 @@ for (const s of SAYFALAR) {
     ok("şifreyle otomatik giriş yapılmadı", t.ev("GIRISLI") === false);
   }
 
-  console.log("=== 6. Oturum süresi dolmuş ===");
+  console.log("=== 6. Çıkış ===");
+  {
+    // Paylaşılan bilgisayar: oturumu kasten kapatabilmek şart.
+    const t = kur({ oturum: [[s.anahtar + "_token", "TKN_C"], [s.anahtar + "_zaman", String(Date.now())]],
+                    rpc: () => ({ data: { ok: true }, error: null }) });
+    ok("önce giriş yapılmış", t.ev("GIRISLI") === true);
+    await t.ev("cikisYap()");
+    ok("sunucuya oturum_iptal gitti",
+        t.cagrilar.some(c => c.ad === "oturum_iptal" && c.arg.p_token === "TKN_C"),
+        JSON.stringify(t.cagrilar.map(c => c.ad)));
+    ok("TOKEN temizlendi", t.ev("TOKEN") === null);
+    ok("giriş bayrağı kapandı", t.ev("GIRISLI") === false);
+    ok("sessionStorage'daki token silindi", t.ss.getItem(s.anahtar + "_token") === null);
+    ok("kilit ekranı geri geldi", t.getEl("kilit").style.display === "");
+    ok("ana ekran gizlendi", t.getEl("ana").style.display === "none");
+    ok("şifre kutusu boş", t.getEl("sifre").value === "");
+    if (s.sayfa === "depo.html") {
+      // Otomatik tazeleme 15 saniyede bir sorgu atıyor; durdurulmazsa
+      // çıkıştan sonra ölü token ile sorgulamaya devam ederdi.
+      ok("otomatik tazeleme durduruldu",
+          t.zamanlayicilar.acilan.length > 0 &&
+          t.zamanlayicilar.kapanan.length >= t.zamanlayicilar.acilan.length,
+          "acilan=" + t.zamanlayicilar.acilan.length + " kapanan=" + t.zamanlayicilar.kapanan.length);
+    }
+  }
+
+  console.log("=== 7. Oturum süresi dolmuş ===");
   {
     const t = kur({ oturum: [[s.anahtar + "_token", "ESKI"],
                              [s.anahtar + "_zaman", String(Date.now() - 13 * 3600 * 1000)]],

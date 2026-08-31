@@ -30,6 +30,7 @@
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="seedBaslat()">☁ Mevcut listeleri buluta yükle</button>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="pinYonetimiAc()">🔑 Outlet PIN'leri</button>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="kaptanPaneliAc()">🧑‍✈️ Kaptanlar</button>
+      <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="cikisYap()">🚪 Çıkış</button>
     </div>
   </div>
 
@@ -113,6 +114,22 @@ async function giris() {
     inp.value = ""; inp.focus();
   }
   btn.disabled = false; btn.textContent = "Giriş";
+}
+
+/* Yönetici oturumu açık kalırsa sıradaki kişi kaptan ekleyip PIN sıfırlayabilir.
+   Kasten kapatma yolu şart. Token sunucuda da iptal edilir. */
+async function cikisYap() {
+  if (!confirm("Oturumu kapatmak istiyor musunuz?")) return;
+  await oturumuKapat();
+  GIRISLI = false;
+  LISTE = null; KALEMLER = [];
+  ["gurok_admin_token", "gurok_admin_zaman", "gurok_admin_sifre"]
+    .forEach(k => { try { sessionStorage.removeItem(k); } catch (e) {} });
+  document.getElementById("ana").style.display = "none";
+  document.getElementById("kilit").style.display = "";
+  document.getElementById("hata").textContent = "";
+  const inp = document.getElementById("sifre");
+  inp.value = ""; inp.focus();
 }
 
 function basla() {

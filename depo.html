@@ -29,6 +29,7 @@
       <span class="canli"><i></i> Canlı</span>
       <input type="date" id="tarih" onchange="yenile()">
       <button class="db" onclick="yenile()">🔄 Yenile</button>
+      <button class="db" style="background:#555" onclick="cikisYap()">🚪 Çıkış</button>
     </div>
   </div>
 
@@ -227,6 +228,25 @@ async function giris() {
 
   btn.disabled = false;
   btn.textContent = "Giriş";
+}
+
+/* Depo bilgisayarı paylaşımlı ve oturum 2 saat sürüyor. Kasten sonlandırma
+   yolu olmazsa, kalkıp giden birinin ardından gelen kişi onun adına sipariş
+   onaylayabilir ya da stok silebilir. Token sunucuda da iptal edilir. */
+async function cikisYap() {
+  if (!confirm("Oturumu kapatmak istiyor musunuz?")) return;
+  // Önce otomatik tazelemeyi durdur: ölü token ile sorgu atmaya devam etmesin.
+  if (zamanlayici) { clearInterval(zamanlayici); zamanlayici = null; }
+  await oturumuKapat();
+  GIRISLI = false;
+  ACIK_NO = null; ACIK_URUN = null; SIPARISLER = []; STOK = null;
+  ["gurok_depo_token", "gurok_depo_zaman", "gurok_depo_sifre"]
+    .forEach(k => { try { sessionStorage.removeItem(k); } catch (e) {} });
+  document.getElementById("ana").style.display = "none";
+  document.getElementById("kilit").style.display = "";
+  document.getElementById("hata").textContent = "";
+  const inp = document.getElementById("sifre");
+  inp.value = ""; inp.focus();
 }
 
 function basla() {

@@ -69,12 +69,18 @@ function tarayiciKur(opt) {
   const ss = depoYap();
   (opt.oturum || []).forEach(kv => ss.setItem(kv[0], kv[1]));
   const cevaplar = (opt.cevaplar || []).slice();
+  // Zamanlayıcılar: id TRUTHY olmalı (kod "if (zamanlayici)" diye bakıyor),
+  // ve durdurulup durdurulmadığını görebilmek için kayıt tutulur.
+  const zamanlayicilar = { acilan: [], kapanan: [] };
+  let sonrakiId = 1;
 
   const ctx = {
     console: { log(){}, error(){}, warn(){} },
     Date, Math, JSON, Set, Map, Number, String, Object, Array, Error, RegExp, Promise,
     parseInt, parseFloat, isNaN,
-    setTimeout, clearTimeout, setInterval: () => 0, clearInterval: () => {},
+    setTimeout, clearTimeout,
+    setInterval: () => { const id = sonrakiId++; zamanlayicilar.acilan.push(id); return id; },
+    clearInterval: id => { zamanlayicilar.kapanan.push(id); },
     encodeURIComponent, decodeURIComponent,
     Blob: function(){}, URL: { createObjectURL: () => "blob:x", revokeObjectURL(){} },
     sessionStorage: ss, localStorage: depoYap(),
@@ -116,7 +122,7 @@ function tarayiciKur(opt) {
     }
   }
 
-  return { ctx, ev: kod => vm.runInContext(kod, ctx), cagrilar, uyarilar, sorular, ss, getEl };
+  return { ctx, ev: kod => vm.runInContext(kod, ctx), cagrilar, uyarilar, sorular, ss, getEl, zamanlayicilar };
 }
 
 module.exports = { KOK, ok, sonuc, tarayiciKur, depoYap, elemanYap };
