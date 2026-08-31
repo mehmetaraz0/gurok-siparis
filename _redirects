@@ -1,0 +1,3 @@
+# Kök adres index.html'i göstersin (adres çubuğu değişmeden).
+# html_handling="none" olduğu için Workers bu eşlemeyi kendisi yapmıyor.
+/    /index.html    200

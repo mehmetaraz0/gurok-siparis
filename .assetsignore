@@ -4,4 +4,6 @@ docs/
 *.md
 .gitattributes
 .assetsignore
+_redirects
+_headers
 wrangler.toml
