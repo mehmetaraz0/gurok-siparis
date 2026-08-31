@@ -140,8 +140,16 @@
 <script src="vendor/jszip.min.js"></script>
 <script src="vendor/supabase.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
-        integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<!-- pdf.js 4.x yalnızca ESM dağıtılıyor (UMD build'i yok). Sayfanın geri kalanı
+     global fonksiyonlar kullandığı için modüle çevrilemez; bu köprü pdfjsLib'i
+     window'a asar ve hazır olduğunda bayrak koyar. -->
+<script type="module">
+  import * as pdfjsLib from "./vendor/pdf.module.js";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdf.worker.module.js";
+  window.pdfjsLib = pdfjsLib;
+  window.__pdfjsHazir = true;
+  window.dispatchEvent(new Event("pdfjs-hazir"));
+</script>
 <script src="veri.js"></script>
 <script src="mutfak.js"></script>
 <script src="tuketim.js"></script>
@@ -150,9 +158,14 @@
 <script src="config.js"></script>
 <script src="ortak.js"></script>
 <script>
-if (window.pdfjsLib) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+// ESM modülü asenkron yüklenir; sayfa açılır açılmaz PDF seçilirse henüz hazır
+// olmayabilir. En fazla 10 sn bekler.
+function pdfjsBekle() {
+  if (window.__pdfjsHazir) return Promise.resolve(true);
+  return new Promise(cz => {
+    const t = setTimeout(() => cz(!!window.__pdfjsHazir), 10000);
+    window.addEventListener("pdfjs-hazir", () => { clearTimeout(t); cz(true); }, { once: true });
+  });
 }
 
 /* ================= Durum ================= */
@@ -1226,6 +1239,7 @@ function stokExcelOku(file) {
 }
 
 async function stokPdfOku(file) {
+  if (!(await pdfjsBekle())) throw new Error("PDF motoru yüklenemedi, sayfayı yenileyin");
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
 
