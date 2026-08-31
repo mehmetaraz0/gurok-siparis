@@ -117,7 +117,9 @@ async function kaptanGiris() {
       err.textContent = (data && data.hata) ? data.hata : "Kaptan veya PIN hatalı.";
       return;
     }
-    KAPTAN = { kod: kod, ad: data.ad, pin: pin, departman: data.departman || "hepsi" };
+    // Yeni DB token döner; eski DB dönmez → kaptanArg eski PIN yoluna düşer.
+    if (data.token) { TOKEN = data.token; TOKEN_MODU = true; }
+    KAPTAN = { kod: kod, ad: data.ad, pin: pin, departman: data.departman || "hepsi", token: data.token || null };
     sessionStorage.setItem("gurok_kaptan_kod", kod);
     sessionStorage.setItem("gurok_kaptan_pin", pin);
     sessionStorage.setItem("gurok_kaptan_ad", data.ad);
@@ -164,16 +166,16 @@ function mutfakSec(m) {
 
 async function kaptanSifreDegistir() {
   if (!KAPTAN) return;
-  const yeni = prompt("Yeni PIN (3-12 hane):");
+  const yeni = prompt("Yeni PIN (en az 6 hane):");
   if (yeni === null) return;                        // iptal
   const y = yeni.trim();
-  if (!/^[0-9]{3,12}$/.test(y)) { alert("PIN 3-12 haneli sayı olmalı."); return; }
+  if (!/^[0-9]{6,12}$/.test(y)) { alert("PIN en az 6 haneli sayı olmalı."); return; }
   const yeni2 = prompt("Yeni PIN'i tekrar girin:");
   if (yeni2 === null) return;
   if (y !== yeni2.trim()) { alert("İki PIN aynı değil, tekrar deneyin."); return; }
   try {
     const { data, error } = await SB.rpc("kaptan_sifre_degistir",
-      { p_kod: KAPTAN.kod, p_eski_pin: KAPTAN.pin, p_yeni_pin: y });
+      { ...kaptanArg(KAPTAN), p_eski_pin: KAPTAN.pin, p_yeni_pin: y });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
@@ -183,7 +185,8 @@ async function kaptanSifreDegistir() {
   } catch (e) { alert("Değiştirilemedi: " + (e.message || "hata")); }
 }
 
-function kaptanaCik() {
+async function kaptanaCik() {
+  await oturumuKapat();
   makbuzTazelemeDurdur();   // çıkışta PIN'li sorgu atmaya devam etmesin
   KAPTAN = null;
   ["gurok_kaptan_kod", "gurok_kaptan_pin", "gurok_kaptan_ad", "gurok_kaptan_dep"].forEach(k => sessionStorage.removeItem(k));
@@ -399,7 +402,7 @@ async function makbuzCiz() {
   if (C && KAPTAN) {
     try {
       const { data, error } = await SB.rpc("bekleyen_siparisler", {
-        p_outlet_kod: C.c, p_bolum: C.bl, p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
+        p_outlet_kod: C.c, p_bolum: C.bl, ...kaptanArg(KAPTAN) });
       if (error) throw error;
       // Kimlik hatası dizi değil {ok:false} döner — sessizce "çevrimdışı" sanılmasın.
       const kh = rpcKimlikHatasi(data);
@@ -491,7 +494,7 @@ async function siparisTeslim(no, durum) {
   try {
     const { data, error } = await SB.rpc("siparis_teslim", {
       p_siparis_no: no, p_durum: durum, p_not: not,
-      p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
+      ...kaptanArg(KAPTAN) });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
@@ -513,7 +516,7 @@ async function siparisGeriCagir(no, duzelt) {
   if (!confirm(soru)) return;
   try {
     const { data, error } = await SB.rpc("siparis_geri_cagir",
-      { p_siparis_no: no, p_kaptan_kod: KAPTAN.kod, p_kaptan_pin: KAPTAN.pin });
+      { p_siparis_no: no, ...kaptanArg(KAPTAN) });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
@@ -769,8 +772,7 @@ async function gonder() {
     const { data, error } = await SB.rpc("siparis_gonder", {
       p_outlet_kod: C.c, p_outlet_ad: C.n, p_kalemler: kalemler,
       p_bolum: C.bl, p_istemci_id: siparisId,
-      p_kaptan_kod: KAPTAN ? KAPTAN.kod : null,
-      p_kaptan_pin: KAPTAN ? KAPTAN.pin : null
+      ...kaptanArg(KAPTAN)
     });
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);

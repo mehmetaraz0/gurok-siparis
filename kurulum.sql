@@ -165,6 +165,167 @@ begin
 end $$;
 
 -- Bir kaptan verilen birim türüne (bar/mutfak) yetkili mi?
+
+-- ================= OTURUM (TOKEN) =================
+-- H-1/H-2/M-1'in KÖK NEDENİ: şifre/PIN her RPC'nin parametresiydi, yani her RPC
+-- bir deneme kapısıydı. kaptan_dogrula sayacı besleyerek H-2'yi kapattı; ancak
+-- depo/admin şifreleri hâlâ her çağrıda dolaşıyordu (H-1) ve tarayıcıda düz
+-- metin duruyordu (M-1). Çözüm kapı sayısını 1'e indirmek:
+--   • şifre/PIN YALNIZCA üç giriş fonksiyonunda kabul edilir
+--   • diğer tüm RPC'ler kısa ömürlü, iptal edilebilir token alır
+--   • token DB'de düz tutulmaz; yalnız sha256 özeti saklanır
+create table if not exists public.oturum (
+  token_hash   text primary key,
+  tip          text not null,              -- 'kaptan' | 'depo' | 'admin'
+  ref          text,                       -- kaptan kodu (depo/admin'de null)
+  olusturma    timestamptz not null default now(),
+  son_kullanma timestamptz not null
+);
+create index if not exists oturum_sonkullanma_idx on public.oturum (son_kullanma);
+alter table public.oturum enable row level security;
+revoke all on public.oturum from anon, authenticated;
+
+create or replace function public.oturum_omru(p_tip text)
+returns interval language sql immutable as $$
+  select case when p_tip = 'kaptan' then interval '12 hours' else interval '2 hours' end;
+$$;
+
+-- Token üret + kaydet; DÜZ token yalnız burada, bir kez döner
+create or replace function public.oturum_ac(p_tip text, p_ref text)
+returns text language plpgsql security definer set search_path = public, extensions as $$
+declare v_token text;
+begin
+  delete from oturum where son_kullanma < now();          -- lazy temizlik
+  v_token := encode(extensions.gen_random_bytes(32), 'hex');
+  insert into oturum (token_hash, tip, ref, son_kullanma)
+  values (encode(extensions.digest(v_token, 'sha256'), 'hex'), p_tip, p_ref,
+          now() + oturum_omru(p_tip));
+  return v_token;
+end $$;
+
+-- Kaptan oturumu → kaptan_dogrula ile AYNI jsonb sözleşmesi:
+--   {ok:true, kod, ad, departman} | {ok:false, hata}
+-- Böylece çağıran fonksiyonların gövdesi değişmez.
+create or replace function public.oturum_kaptan(p_token text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_kod text; v_ad text; v_dep text;
+begin
+  select k.kod, k.ad, k.departman into v_kod, v_ad, v_dep
+    from oturum o join kaptan k on lower(k.kod) = lower(o.ref)
+   where o.token_hash = encode(extensions.digest(coalesce(p_token,''), 'sha256'), 'hex')
+     and o.son_kullanma > now() and o.tip = 'kaptan' and k.aktif;
+  if v_ad is null then
+    return jsonb_build_object('ok', false, 'hata', 'Oturum gecersiz veya suresi dolmus');
+  end if;
+  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_ad,
+    'departman', coalesce(v_dep,'hepsi'));
+end $$;
+
+create or replace function public.oturum_depo(p_token text)
+returns boolean language sql security definer set search_path = public, extensions as $$
+  select exists (select 1 from oturum
+                  where token_hash = encode(extensions.digest(coalesce(p_token,''),'sha256'),'hex')
+                    and son_kullanma > now() and tip = 'depo');
+$$;
+
+create or replace function public.oturum_admin(p_token text)
+returns boolean language sql security definer set search_path = public, extensions as $$
+  select exists (select 1 from oturum
+                  where token_hash = encode(extensions.digest(coalesce(p_token,''),'sha256'),'hex')
+                    and son_kullanma > now() and tip = 'admin');
+$$;
+
+-- Çıkış
+create or replace function public.oturum_iptal(p_token text)
+returns jsonb language sql security definer set search_path = public, extensions as $$
+  with x as (delete from oturum
+              where token_hash = encode(extensions.digest(coalesce(p_token,''),'sha256'),'hex')
+             returning 1)
+  select jsonb_build_object('ok', true, 'silinen', (select count(*) from x));
+$$;
+
+-- Bir kimliğin tüm oturumlarını kapat (PIN/şifre değişimi, kaptan silme)
+create or replace function public.oturum_kapat_tumu(p_tip text, p_ref text)
+returns void language sql security definer set search_path = public as $$
+  delete from oturum
+   where tip = p_tip and (p_ref is null or lower(coalesce(ref,'')) = lower(p_ref));
+$$;
+
+-- Parametre adı/sayısı değiştiği için create-or-replace yetmez; ESKİ İMZALAR
+-- DÜŞÜRÜLÜR. Bu, eski şifre/PIN'li çağrı yüzeyini de tamamen kapatır:
+-- iki kapılı mimari bırakılmaz.
+drop function if exists public.depo_liste(text, date);
+drop function if exists public.depo_envanter(text, date, date);
+drop function if exists public.depo_kalem_guncelle(text, text, text, int);
+drop function if exists public.depo_durum_degistir(text, text, text);
+drop function if exists public.onay_stok_kontrol(text, text);
+drop function if exists public.stok_baseline(text, jsonb, boolean);
+drop function if exists public.stok_malkabul(text, jsonb, boolean);
+drop function if exists public.stok_yukleme_liste(text, int);
+drop function if exists public.stok_yukleme_geri_al(text, uuid);
+drop function if exists public.stok_liste(text);
+drop function if exists public.stok_katalog_disi_sil(text, jsonb);
+drop function if exists public.stok_temizle(text);
+drop function if exists public.kaptan_liste(text);
+drop function if exists public.kaptan_ekle(text, text, text, text, text);
+drop function if exists public.kaptan_sil(text, text);
+drop function if exists public.kaptan_departman(text, text, text);
+drop function if exists public.kaptan_pin_degistir(text, text, text);
+drop function if exists public.katalog_giris(text);
+drop function if exists public.katalog_seed(text, text, jsonb);
+drop function if exists public.katalog_ekle(text, text, text, text, text, text);
+drop function if exists public.katalog_cikar(text, text, text);
+drop function if exists public.katalog_duzelt(text, text, text, text, text, text);
+drop function if exists public.katalog_sira(text, text, jsonb);
+drop function if exists public.urun_min_ayarla(text, text, numeric);
+drop function if exists public.urun_minstok_ayarla(text, text, numeric);
+drop function if exists public.outlet_liste(text);
+drop function if exists public.outlet_pin_liste(text, text);
+drop function if exists public.outlet_pin_ekle(text, text, text, text);
+drop function if exists public.outlet_pin_sil(text, uuid);
+drop function if exists public.katalog_getir(text, text, text, text);
+drop function if exists public.stok_gizli_kodlar(text, text);
+drop function if exists public.siparis_gonder(text, text, jsonb, text, text, text, text);
+drop function if exists public.bekleyen_siparisler(text, text, text, text);
+drop function if exists public.siparis_geri_cagir(text, text, text);
+drop function if exists public.siparis_teslim(text, text, text, text, text);
+
+-- ===== GİRİŞ FONKSİYONLARI (şifre/PIN yalnızca burada kabul edilir) =====
+-- Hepsi hata durumunda EXCEPTION ATMAZ: {ok:false} döner. Aksi halde deneme
+-- sayacı transaction ile birlikte geri alınır (H-2'nin kök nedeni).
+
+create or replace function public.depo_giris(p_sifre text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  delete from kaptan_deneme where zaman < now() - interval '1 day';
+  if kaptan_kilitli('#depo') then
+    return jsonb_build_object('ok', false,
+      'hata', 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.');
+  end if;
+  if not depo_dogru(p_sifre) then
+    insert into kaptan_deneme (kod) values ('#depo');
+    return jsonb_build_object('ok', false, 'hata', 'Sifre hatali');
+  end if;
+  delete from kaptan_deneme where kod = '#depo';
+  return jsonb_build_object('ok', true, 'token', oturum_ac('depo', null));
+end $$;
+
+create or replace function public.admin_giris(p_sifre text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  delete from kaptan_deneme where zaman < now() - interval '1 day';
+  if kaptan_kilitli('#admin') then
+    return jsonb_build_object('ok', false,
+      'hata', 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.');
+  end if;
+  if not admin_dogru(p_sifre) then
+    insert into kaptan_deneme (kod) values ('#admin');
+    return jsonb_build_object('ok', false, 'hata', 'Sifre hatali');
+  end if;
+  delete from kaptan_deneme where kod = '#admin';
+  return jsonb_build_object('ok', true, 'token', oturum_ac('admin', null));
+end $$;
+
 create or replace function public.kaptan_birim_yetkili(p_departman text, p_tur text)
 returns boolean language sql immutable as $$
   select coalesce(p_departman,'hepsi') = 'hepsi'
@@ -308,23 +469,18 @@ end $$;
 -- kimlik istemeyen bir fonksiyondu; anon key ile tüm ürün katalogu (kod, ad, birim,
 -- min sipariş/min stok) dışarı alınabiliyordu.
 drop function if exists public.katalog_getir(text);
+drop function if exists public.katalog_getir(text, text, text);
 create or replace function public.katalog_getir(
-  p_liste      text,
-  p_kaptan_kod text default null,
-  p_kaptan_pin text default null,
-  p_sifre      text default null)
+  p_liste text,
+  p_token text default null)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_kimlik jsonb; v_tur text; v_admin boolean;
 begin
-  v_admin := coalesce(p_sifre,'') <> '' and admin_dogru(p_sifre);
+  -- Admin oturumu tüm listeleri görebilir; kaptan yalnız kendi departmanını.
+  v_admin := oturum_admin(p_token);
 
   if not v_admin then
-    -- Admin yolu denenip yanlışsa kaptan yoluna DÜŞME: admin'e {ok:false} yerine
-    -- eskisi gibi hata dönmeli (istemci onu yakalıyor) ve sayaca da yazılmamalı.
-    if coalesce(p_sifre,'') <> '' then raise exception 'Sifre hatali'; end if;
-
-    v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
-    -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+    v_kimlik := oturum_kaptan(p_token);
     if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
 
     -- YATAY YETKİ: istenen liste kaptanın departmanına ait olmalı. Eskiden
@@ -350,11 +506,11 @@ end $$;
 -- stok tablosundan "hangi ürünler tükendi" bilgisi dışarı alınabiliyordu.
 -- Artık geçerli + aktif bir kaptan PIN'i ister (kasa farketmez).
 drop function if exists public.stok_gizli_kodlar();
-create or replace function public.stok_gizli_kodlar(p_kaptan_kod text, p_kaptan_pin text)
+create or replace function public.stok_gizli_kodlar(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_kimlik jsonb;
 begin
-  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  v_kimlik := oturum_kaptan(p_token);
   -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
   if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
   return coalesce((select jsonb_agg(kod) from stok where miktar <= 0), '[]'::jsonb);
@@ -373,15 +529,14 @@ drop function if exists public.siparis_gonder(text, text, jsonb, text, text, tex
 -- NOT: p_pin parametresi kaldırıldı. Outlet-PIN modelinden kalmıştı; kaptan
 -- modeline geçildiğinde gövdede kullanılmayı bıraktı ama imzada durmaya devam
 -- etti. Çağırana "PIN de doğrulanıyor" izlenimi veriyordu; hiçbir istemci
--- göndermiyordu. Kimlik yalnızca p_kaptan_kod + p_kaptan_pin ile doğrulanır.
+-- göndermiyordu. Kimlik artık OTURUM TOKEN'ı ile doğrulanır (p_token).
 create or replace function public.siparis_gonder(
   p_outlet_kod  text,
   p_outlet_ad   text,               -- YOK SAYILIR (sunucu outletler'den alır)
   p_kalemler    jsonb,
   p_bolum       text default null,
   p_istemci_id  text default null,
-  p_kaptan_kod  text default null,  -- kişi kimliği (bar + mutfak)
-  p_kaptan_pin  text default null
+  p_token       text default null   -- oturum token'ı (kaptan girişinden)
 )
 returns jsonb
 language plpgsql security definer set search_path = public, extensions
@@ -401,7 +556,7 @@ begin
   if v_ad is null then raise exception 'Gecersiz outlet'; end if;
 
   -- Kişi (kaptan/personel) kimliği: geçerli + aktif kaptan PIN'i şart (kasa farketmez).
-  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  v_kimlik := oturum_kaptan(p_token);
   -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
   if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
   v_gonderen := v_kimlik->>'ad';
@@ -503,11 +658,11 @@ drop function if exists public.siparis_getir(text);
 
 -- ================= DEPO (şifre ister) =================
 
-create or replace function public.depo_liste(p_sifre text, p_tarih date default null)
+create or replace function public.depo_liste(p_token text, p_tarih date default null)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_tarih date := coalesce(p_tarih, (now() at time zone 'Europe/Istanbul')::date);
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'siparis_no', siparis_no, 'outlet_kod', outlet_kod, 'outlet_ad', outlet_ad,
@@ -520,13 +675,13 @@ begin
       from siparisler where tarih = v_tarih), '[]'::jsonb);
 end $$;
 
-create or replace function public.depo_envanter(p_sifre text, p_bas date, p_bit date)
+create or replace function public.depo_envanter(p_token text, p_bas date, p_bit date)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_bas date := coalesce(p_bas, (now() at time zone 'Europe/Istanbul')::date);
   v_bit date := coalesce(p_bit, (now() at time zone 'Europe/Istanbul')::date);
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if v_bit < v_bas then raise exception 'Bitis tarihi baslangictan once olamaz'; end if;
   if v_bit - v_bas > 92 then raise exception 'En fazla 92 gunluk aralik sorgulanabilir'; end if;
   return coalesce((
@@ -538,11 +693,11 @@ begin
       from siparisler where tarih between v_bas and v_bit), '[]'::jsonb);
 end $$;
 
-create or replace function public.depo_kalem_guncelle(p_sifre text, p_siparis_no text, p_kalem_kod text, p_onay int)
+create or replace function public.depo_kalem_guncelle(p_token text, p_siparis_no text, p_kalem_kod text, p_onay int)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_durum text;
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if p_onay is null or p_onay < 0 or p_onay > 100000 then raise exception 'Gecersiz miktar'; end if;
   select durum into v_durum from siparisler where siparis_no = p_siparis_no;
   if not found then raise exception 'Siparis bulunamadi'; end if;
@@ -557,11 +712,11 @@ begin
 end $$;
 
 -- Onayda TABAN STOK KESİN ENGEL + stok düş / kilit açınca geri ekle
-create or replace function public.depo_durum_degistir(p_sifre text, p_siparis_no text, p_durum text)
+create or replace function public.depo_durum_degistir(p_token text, p_siparis_no text, p_durum text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_saat timestamptz; v_eski text; v_engel text;
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if p_durum not in ('talep','onaylandi') then raise exception 'Gecersiz durum'; end if;
   select durum into v_eski from siparisler where siparis_no = p_siparis_no;
   if not found then raise exception 'Siparis bulunamadi'; end if;
@@ -607,10 +762,10 @@ begin
                  else to_char(v_saat at time zone 'Europe/Istanbul','HH24:MI') end);
 end $$;
 
-create or replace function public.onay_stok_kontrol(p_sifre text, p_siparis_no text)
+create or replace function public.onay_stok_kontrol(p_token text, p_siparis_no text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   return coalesce((
     select jsonb_agg(jsonb_build_object('kod', s.kod, 'ad', s.ad, 'mevcut', st.miktar,
              'dusecek', s.mik, 'sonra', st.miktar - s.mik, 'min_stok', um.min_stok))
@@ -667,13 +822,13 @@ revoke all on public.stok_yukleme from anon, authenticated;
 drop function if exists public.stok_baseline(text, jsonb);
 drop function if exists public.stok_malkabul(text, jsonb);
 
-create or replace function public.stok_baseline(p_sifre text, p_kalemler jsonb, p_zorla boolean default false)
+create or replace function public.stok_baseline(p_token text, p_kalemler jsonb, p_zorla boolean default false)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_kalemler jsonb; v_imza text; v_adet int; v_toplam numeric;
   v_eski timestamptz; v_eskimod text; v_mukerrer boolean := false;
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
 
   -- Dosyada aynı kod birden çok kez geçebilir (çok sayfalı Excel). Baseline bir
@@ -722,13 +877,13 @@ begin
   return jsonb_build_object('ok', true, 'adet', v_adet, 'toplam', v_toplam, 'zorlandi', v_mukerrer);
 end $$;
 
-create or replace function public.stok_malkabul(p_sifre text, p_kalemler jsonb, p_zorla boolean default false)
+create or replace function public.stok_malkabul(p_token text, p_kalemler jsonb, p_zorla boolean default false)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_kalemler jsonb; v_imza text; v_adet int; v_toplam numeric;
   v_eski timestamptz; v_eskimod text; v_mukerrer boolean := false;
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
 
   -- Mal kabulde aynı kod birden çok satırda gelebilir → TOPLANIR (gerçekten iki
@@ -777,10 +932,10 @@ begin
 end $$;
 
 -- Son yüklemeler (kalemler dönmez — liste hafif kalsın)
-create or replace function public.stok_yukleme_liste(p_sifre text, p_adet int default 30)
+create or replace function public.stok_yukleme_liste(p_token text, p_adet int default 30)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'id', t.id, 'tarih', t.tarih, 'mod', t.mod, 'kalem_sayisi', t.kalem_sayisi,
@@ -797,11 +952,11 @@ end $$;
 --                onay düşümleri de geri gelir; bu yüzden istemci uyarı gösterir)
 -- Yalnızca EN YENİ geçerli yükleme geri alınabilir: daha yeni bir yükleme
 -- araya girmişse eski kaydın "önceki değer"leri artık doğru değildir.
-create or replace function public.stok_yukleme_geri_al(p_sifre text, p_id uuid)
+create or replace function public.stok_yukleme_geri_al(p_token text, p_id uuid)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_mod text; v_kalemler jsonb; v_zaman timestamptz; v_geri boolean; v_adet int;
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   select mod, kalemler, olusturma, geri_alindi
     into v_mod, v_kalemler, v_zaman, v_geri
     from stok_yukleme where id = p_id;
@@ -831,20 +986,20 @@ begin
   return jsonb_build_object('ok', true, 'adet', v_adet, 'mod', v_mod);
 end $$;
 
-create or replace function public.stok_liste(p_sifre text)
+create or replace function public.stok_liste(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   return coalesce((select jsonb_agg(jsonb_build_object('kod',kod,'ad',ad,'birim',birim,
     'miktar',miktar,'guncelleme',guncelleme) order by kod) from stok), '[]'::jsonb);
 end $$;
 
 -- Katalog dışı stok temizle (yiyecek/içecek YIY/ICA/ICB KORUNUR)
-create or replace function public.stok_katalog_disi_sil(p_sifre text, p_kodlar jsonb)
+create or replace function public.stok_katalog_disi_sil(p_token text, p_kodlar jsonb)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_silinen int;
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if jsonb_typeof(p_kodlar) <> 'array' or jsonb_array_length(p_kodlar) = 0 then
     raise exception 'Katalog listesi bos'; end if;
   with sil as (
@@ -854,11 +1009,11 @@ begin
   return jsonb_build_object('ok', true, 'silinen', v_silinen);
 end $$;
 
-create or replace function public.stok_temizle(p_sifre text)
+create or replace function public.stok_temizle(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_silinen int;
 begin
-  if not depo_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   with sil as (delete from stok returning 1) select count(*) into v_silinen from sil;
   return jsonb_build_object('ok', true, 'silinen', v_silinen);
 end $$;
@@ -866,18 +1021,18 @@ end $$;
 
 -- ================= ADMIN (yönetici şifresi ister) =================
 
-create or replace function public.katalog_giris(p_sifre text)
+create or replace function public.katalog_giris(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   return jsonb_build_object('ok', true);
 end $$;
 
-create or replace function public.katalog_seed(p_sifre text, p_liste text, p_kalemler jsonb)
+create or replace function public.katalog_seed(p_token text, p_liste text, p_kalemler jsonb)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_adet int;
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_liste,'') = '' then raise exception 'Liste bos'; end if;
   if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
   delete from katalog where liste = p_liste;
@@ -895,11 +1050,11 @@ begin
   return jsonb_build_object('ok', true, 'adet', v_adet);
 end $$;
 
-create or replace function public.katalog_ekle(p_sifre text, p_liste text, p_kod text, p_ad text, p_birim text, p_grup text)
+create or replace function public.katalog_ekle(p_token text, p_liste text, p_kod text, p_ad text, p_birim text, p_grup text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_sira int;
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_kod,'') !~ '^[A-Z]{3}[0-9]{8}$' then raise exception 'Gecersiz kod (ornek: ICA02000001)'; end if;
   if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
   select coalesce(max(sira),0)+1 into v_sira from katalog where liste = p_liste;
@@ -910,18 +1065,18 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
-create or replace function public.katalog_cikar(p_sifre text, p_liste text, p_kod text)
+create or replace function public.katalog_cikar(p_token text, p_liste text, p_kod text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   delete from katalog where liste = p_liste and kod = p_kod;
   return jsonb_build_object('ok', true);
 end $$;
 
-create or replace function public.katalog_duzelt(p_sifre text, p_liste text, p_kod text, p_ad text, p_birim text, p_grup text)
+create or replace function public.katalog_duzelt(p_token text, p_liste text, p_kod text, p_ad text, p_birim text, p_grup text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
   update katalog set ad=left(p_ad,120), birim=left(coalesce(p_birim,'ad'),20),
     grup=nullif(left(coalesce(p_grup,''),60),'') where liste=p_liste and kod=p_kod;
@@ -929,20 +1084,20 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
-create or replace function public.katalog_sira(p_sifre text, p_liste text, p_kodlar jsonb)
+create or replace function public.katalog_sira(p_token text, p_liste text, p_kodlar jsonb)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   update katalog k set sira = x.ord
     from (select value kod, ordinality ord from jsonb_array_elements_text(p_kodlar) with ordinality) x
    where k.liste = p_liste and k.kod = x.kod;
   return jsonb_build_object('ok', true);
 end $$;
 
-create or replace function public.urun_min_ayarla(p_sifre text, p_kod text, p_min numeric)
+create or replace function public.urun_min_ayarla(p_token text, p_kod text, p_min numeric)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_kod,'') !~ '^[A-Z]{3}[0-9]{8}$' then raise exception 'Gecersiz kod'; end if;
   insert into urun_min (kod, min_miktar) values (p_kod, nullif(p_min,0))
   on conflict (kod) do update set min_miktar = nullif(p_min,0);
@@ -950,10 +1105,10 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
-create or replace function public.urun_minstok_ayarla(p_sifre text, p_kod text, p_minstok numeric)
+create or replace function public.urun_minstok_ayarla(p_token text, p_kod text, p_minstok numeric)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_kod,'') !~ '^[A-Z]{3}[0-9]{8}$' then raise exception 'Gecersiz kod'; end if;
   if p_minstok is not null and p_minstok < 0 then raise exception 'Negatif olamaz'; end if;
   insert into urun_min (kod, min_stok) values (p_kod, p_minstok)
@@ -963,10 +1118,10 @@ begin
 end $$;
 
 -- Outlet listesi + her outlet'in PIN sayısı (admin genel görünüm)
-create or replace function public.outlet_liste(p_sifre text)
+create or replace function public.outlet_liste(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   return coalesce((select jsonb_agg(jsonb_build_object(
     'kod', o.kod, 'ad', o.ad, 'tur', o.tur,
     'pin_sayisi', (select count(*) from outlet_pin p where p.outlet_kod = o.kod)) order by o.kod)
@@ -974,20 +1129,20 @@ begin
 end $$;
 
 -- Bir outlet'in PIN'leri (etiketler; hash dönmez)
-create or replace function public.outlet_pin_liste(p_sifre text, p_kod text)
+create or replace function public.outlet_pin_liste(p_token text, p_kod text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   return coalesce((select jsonb_agg(jsonb_build_object('id', id, 'etiket', etiket) order by etiket)
     from outlet_pin where outlet_kod = p_kod), '[]'::jsonb);
 end $$;
 
 -- PIN ekle (outlet başına en fazla 10; etiket = gönderen kimliği)
-create or replace function public.outlet_pin_ekle(p_sifre text, p_kod text, p_etiket text, p_pin text)
+create or replace function public.outlet_pin_ekle(p_token text, p_kod text, p_etiket text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_adet int;
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if not exists (select 1 from outletler where kod = p_kod) then raise exception 'Outlet yok'; end if;
   if coalesce(p_etiket,'') = '' then raise exception 'Etiket (gonderen) bos olamaz'; end if;
   if p_pin !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
@@ -1000,10 +1155,10 @@ begin
 end $$;
 
 -- PIN sil (id ile)
-create or replace function public.outlet_pin_sil(p_sifre text, p_id uuid)
+create or replace function public.outlet_pin_sil(p_token text, p_id uuid)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   delete from outlet_pin where id = p_id;
   return jsonb_build_object('ok', true);
 end $$;
@@ -1036,28 +1191,29 @@ begin
   select kod into v_kod from kaptan where lower(kod) = v_k;
   delete from kaptan_deneme where kod = v_k;      -- başarılı giriş sayacı sıfırlar
   return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_kimlik->>'ad',
-    'departman', v_kimlik->>'departman');
+    'departman', v_kimlik->>'departman',
+    'token', oturum_ac('kaptan', v_kod));
 end $$;
 
 -- Admin: kaptan listesi (PIN yok)
-create or replace function public.kaptan_liste(p_sifre text)
+create or replace function public.kaptan_liste(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   return coalesce((select jsonb_agg(jsonb_build_object('kod', kod, 'ad', ad, 'aktif', aktif, 'departman', departman) order by ad)
     from kaptan), '[]'::jsonb);
 end $$;
 
 -- Admin: kaptan ekle/güncelle (departman ile)
 drop function if exists public.kaptan_ekle(text, text, text, text);
-create or replace function public.kaptan_ekle(p_sifre text, p_kod text, p_ad text, p_pin text, p_departman text default 'hepsi')
+create or replace function public.kaptan_ekle(p_token text, p_kod text, p_ad text, p_pin text, p_departman text default 'hepsi')
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_dep text := coalesce(nullif(p_departman,''),'hepsi');
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_kod,'') !~ '^[A-Za-z0-9]{1,10}$' then raise exception 'Kod 1-10 harf/rakam olmali'; end if;
   if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
-  if coalesce(p_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
+  if coalesce(p_pin,'') !~ '^[0-9]{6,12}$' then raise exception 'PIN en az 6 haneli sayi olmali'; end if;
   if v_dep not in ('bar','mutfak','hepsi') then raise exception 'Gecersiz departman'; end if;
   -- kod küçük harfe normalize edilir (giriş kasadan bağımsız çalışsın)
   insert into kaptan (kod, ad, pin, aktif, departman)
@@ -1067,20 +1223,21 @@ begin
 end $$;
 
 -- Admin: kaptan sil
-create or replace function public.kaptan_sil(p_sifre text, p_kod text)
+create or replace function public.kaptan_sil(p_token text, p_kod text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform oturum_kapat_tumu('kaptan', p_kod);   -- silinen kaptanın oturumları kapanır
   delete from kaptan where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kaptan bulunamadi'; end if;
   return jsonb_build_object('ok', true);
 end $$;
 
 -- Admin: kaptan departman değiştir
-create or replace function public.kaptan_departman(p_sifre text, p_kod text, p_departman text)
+create or replace function public.kaptan_departman(p_token text, p_kod text, p_departman text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_departman,'') not in ('bar','mutfak','hepsi') then raise exception 'Gecersiz departman'; end if;
   update kaptan set departman = p_departman where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kaptan bulunamadi'; end if;
@@ -1088,30 +1245,37 @@ begin
 end $$;
 
 -- Admin: kaptan PIN (şifre) SIFIRLA (unutulan PIN için; eski PIN gerekmez)
-create or replace function public.kaptan_pin_degistir(p_sifre text, p_kod text, p_pin text)
+create or replace function public.kaptan_pin_degistir(p_token text, p_kod text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not admin_dogru(p_sifre) then raise exception 'Sifre hatali'; end if;
-  if coalesce(p_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'PIN 3-12 haneli sayi olmali'; end if;
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  if coalesce(p_pin,'') !~ '^[0-9]{6,12}$' then raise exception 'PIN en az 6 haneli sayi olmali'; end if;
   update kaptan set pin = extensions.crypt(p_pin, extensions.gen_salt('bf', 10))
    where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kaptan bulunamadi'; end if;
+  perform oturum_kapat_tumu('kaptan', p_kod);   -- admin sıfırladı: oturumlar kapanır
   return jsonb_build_object('ok', true);
 end $$;
 
 -- Kaptan KENDİ şifresini değiştirir: eski PIN'i bilmek yeterli (admin şifresi GEREKMEZ).
-create or replace function public.kaptan_sifre_degistir(p_kod text, p_eski_pin text, p_yeni_pin text)
+create or replace function public.kaptan_sifre_degistir(p_token text, p_eski_pin text, p_yeni_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_kimlik jsonb;
+declare v_kimlik jsonb; v_kod text;
 begin
-  if coalesce(p_yeni_pin,'') !~ '^[0-9]{3,12}$' then raise exception 'Yeni PIN 3-12 haneli sayi olmali'; end if;
-  -- kaptan_giris kilitlendiğinde saldırgan buraya kayabilir; aynı kilit burada da
-  -- geçerli — ve artık başarısız deneme buradan da sayaca yazılır.
-  v_kimlik := kaptan_dogrula(p_kod, p_eski_pin);
-  -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
+  if coalesce(p_yeni_pin,'') !~ '^[0-9]{6,12}$' then raise exception 'Yeni PIN en az 6 haneli sayi olmali'; end if;
+  -- Kimlik OTURUMDAN gelir; ek olarak eski PIN sorulur (açık oturumu ele
+  -- geçiren PIN değiştirip hesabı devralamasın).
+  v_kimlik := oturum_kaptan(p_token);
   if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
+  v_kod := v_kimlik->>'kod';
+  if not exists (select 1 from kaptan where lower(kod) = lower(v_kod)
+                  and pin = extensions.crypt(coalesce(p_eski_pin,''), pin)) then
+    raise exception 'Eski PIN hatali';
+  end if;
   update kaptan set pin = extensions.crypt(p_yeni_pin, extensions.gen_salt('bf', 10))
-   where lower(kod) = lower(coalesce(p_kod,''));
+   where lower(kod) = lower(v_kod);
+  -- PIN değişti: bu kaptanın TÜM oturumları kapanır (çalınmış token dahil)
+  perform oturum_kapat_tumu('kaptan', v_kod);
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -1126,13 +1290,13 @@ end $$;
 -- durum süzgeci bilerek yok. (Eski yorum "iptal olanlar dönmez" diyordu ama
 -- sorguda öyle bir filtre hiç olmadı.)
 create or replace function public.bekleyen_siparisler(
-  p_outlet_kod text, p_bolum text, p_kaptan_kod text, p_kaptan_pin text)
+  p_outlet_kod text, p_bolum text, p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_tarih date := (now() at time zone 'Europe/Istanbul')::date;
   v_kimlik jsonb; v_tur text;
 begin
-  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  v_kimlik := oturum_kaptan(p_token);
   -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
   if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
 
@@ -1164,14 +1328,14 @@ end $$;
 -- Siparişi geri çağır (iptal et) ve kalemlerini döndür.
 -- Yalnız BUGÜN + durum='talep' olan sipariş geri çağrılabilir.
 create or replace function public.siparis_geri_cagir(
-  p_siparis_no text, p_kaptan_kod text, p_kaptan_pin text)
+  p_siparis_no text, p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_ad text; v_dep text; v_tur text; v_kalemler jsonb;
   v_tarih date; v_outlet text; v_kimlik jsonb;
   v_bugun date := (now() at time zone 'Europe/Istanbul')::date;
 begin
-  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  v_kimlik := oturum_kaptan(p_token);
   -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
   if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
   v_ad  := v_kimlik->>'ad';
@@ -1207,7 +1371,7 @@ end $$;
 -- bu yalnızca mutabakat kaydıdır.
 create or replace function public.siparis_teslim(
   p_siparis_no text, p_durum text, p_not text,
-  p_kaptan_kod text, p_kaptan_pin text)
+  p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_ad text; v_dep text; v_tur text; v_durum text; v_tarih date; v_outlet text;
@@ -1218,7 +1382,7 @@ begin
     raise exception 'Gecersiz teslim durumu';
   end if;
 
-  v_kimlik := kaptan_dogrula(p_kaptan_kod, p_kaptan_pin);
+  v_kimlik := oturum_kaptan(p_token);
   -- RAISE ETME: sayaç kaydı geri alınır (bkz. kaptan_dogrula notu).
   if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
   v_ad  := v_kimlik->>'ad';
@@ -1251,12 +1415,15 @@ revoke all on all functions in schema public from public;
 -- outlet_giris ARTIK ANON'A ACIK DEGIL: kimlik kaptan modeline gecti, client cagirmiyor.
 -- (Fonksiyon duruyor ama disaridan cagrilamaz; anon icin PIN deneme/outlet adi sizintisi kapandi.)
 revoke execute on function public.outlet_giris(text, text) from anon;
-grant execute on function public.katalog_getir(text, text, text, text)              to anon;
-grant execute on function public.stok_gizli_kodlar(text, text)                        to anon;
-grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text, text)       to anon;
-grant execute on function public.bekleyen_siparisler(text, text, text, text)          to anon;
-grant execute on function public.siparis_geri_cagir(text, text, text)                 to anon;
-grant execute on function public.siparis_teslim(text, text, text, text, text)         to anon;
+grant execute on function public.katalog_getir(text, text)              to anon;
+grant execute on function public.stok_gizli_kodlar(text)                        to anon;
+grant execute on function public.siparis_gonder(text, text, jsonb, text, text, text)       to anon;
+grant execute on function public.bekleyen_siparisler(text, text, text)          to anon;
+grant execute on function public.siparis_geri_cagir(text, text)                 to anon;
+grant execute on function public.siparis_teslim(text, text, text, text)         to anon;
+grant execute on function public.depo_giris(text)                                     to anon;
+grant execute on function public.admin_giris(text)                                    to anon;
+grant execute on function public.oturum_iptal(text)                                   to anon;
 grant execute on function public.kaptan_giris(text, text)                             to anon;
 grant execute on function public.kaptan_liste(text)                                   to anon;
 grant execute on function public.kaptan_ekle(text, text, text, text, text)            to anon;

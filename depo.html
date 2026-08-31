@@ -189,8 +189,12 @@ async function giris() {
   err.textContent = "";
 
   try {
-    const { error } = await SB.rpc("depo_liste", { p_sifre: deger, p_tarih: bugun() });
-    if (error) throw error;
+    // Önce token modeli; DB henüz güncellenmediyse eski şifre yoluna düşer.
+    const g = await sifreIleGiris("depo_giris", deger, async () => {
+      const { error } = await SB.rpc("depo_liste", { p_sifre: deger, p_tarih: bugun() });
+      return error ? { ok: false, hata: (error.message || "").includes("Sifre") ? "Sifre hatali" : "Baglanti" } : { ok: true };
+    });
+    if (!g.ok) throw new Error(g.hata || "Sifre hatali");
     SIFRE = deger;
     sessionStorage.setItem("gurok_depo_sifre", deger); oturumDamgala("gurok_depo");
     basla();
@@ -233,7 +237,7 @@ function otoYenile() {
 async function yenile() {
   const tarih = document.getElementById("tarih").value || bugun();
   try {
-    const { data, error } = await SB.rpc("depo_liste", { p_sifre: SIFRE, p_tarih: tarih });
+    const { data, error } = await SB.rpc("depo_liste", { ...yetkiArg(SIFRE), p_tarih: tarih });
     if (error) throw error;
     SIPARISLER = data || [];
     ciz();
@@ -388,7 +392,7 @@ async function envanterGetir() {
 
   try {
     const { data, error } = await SB.rpc("depo_envanter", {
-      p_sifre: SIFRE, p_bas: bas, p_bit: bit
+      ...yetkiArg(SIFRE), p_bas: bas, p_bit: bit
     });
     if (error) throw error;
     ENVANTER = data || [];
@@ -664,7 +668,7 @@ async function kalemKaydet(inp) {
   inp.disabled = true;
   try {
     const { error } = await SB.rpc("depo_kalem_guncelle", {
-      p_sifre: SIFRE, p_siparis_no: ACIK_NO,
+      ...yetkiArg(SIFRE), p_siparis_no: ACIK_NO,
       p_kalem_kod: inp.dataset.k, p_onay: yeni
     });
     if (error) throw error;
@@ -705,7 +709,7 @@ async function durumDegistir(yeniDurum) {
     let tabanAlti = [];
     let onKontrolCalisti = true;
     try {
-      const { data, error } = await SB.rpc("onay_stok_kontrol", { p_sifre: SIFRE, p_siparis_no: ACIK_NO });
+      const { data, error } = await SB.rpc("onay_stok_kontrol", { ...yetkiArg(SIFRE), p_siparis_no: ACIK_NO });
       if (error) throw error;
       tabanAlti = data || [];
     } catch (e) {
@@ -729,7 +733,7 @@ async function durumDegistir(yeniDurum) {
 
   try {
     const { error } = await SB.rpc("depo_durum_degistir", {
-      p_sifre: SIFRE, p_siparis_no: ACIK_NO, p_durum: yeniDurum
+      ...yetkiArg(SIFRE), p_siparis_no: ACIK_NO, p_durum: yeniDurum
     });
     if (error) throw error;
     await yenile();
@@ -773,8 +777,8 @@ async function tuketimGetir() {
   document.getElementById("tukHazir").textContent = "";
   try {
     const [env, stk] = await Promise.all([
-      SB.rpc("depo_envanter", { p_sifre: SIFRE, p_bas: bas, p_bit: bit }),
-      SB.rpc("stok_liste",   { p_sifre: SIFRE })
+      SB.rpc("depo_envanter", { ...yetkiArg(SIFRE), p_bas: bas, p_bit: bit }),
+      SB.rpc("stok_liste",   { ...yetkiArg(SIFRE) })
     ]);
     if (env.error) throw env.error;
     const orders = env.data || [];
@@ -1066,7 +1070,7 @@ async function stokGetir() {
   const kutu = document.getElementById("stokIcerik");
   kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
   try {
-    const { data, error } = await SB.rpc("stok_liste", { p_sifre: SIFRE });
+    const { data, error } = await SB.rpc("stok_liste", { ...yetkiArg(SIFRE) });
     if (error) throw error;
     STOK = data || [];
     cizStok();
@@ -1122,7 +1126,7 @@ async function stokKatalogDisiTemizle() {
              + "(GNL01 aktivite, GNL05 çevre vb.).\n\nYiyecek/içecek ve katalogdaki ürünler etkilenmez. Devam?")) return;
   try {
     const { data, error } = await SB.rpc("stok_katalog_disi_sil", {
-      p_sifre: SIFRE, p_kodlar: [...katalogKodlari()]
+      ...yetkiArg(SIFRE), p_kodlar: [...katalogKodlari()]
     });
     if (error) throw error;
     alert((data.silinen ?? 0) + " katalog dışı kayıt silindi.");
@@ -1138,7 +1142,7 @@ async function stokTumTemizle() {
   if (!confirm("TÜM stok kayıtları silinecek.\n\nBundan sonra STOK sekmesinden Baseline "
              + "yükleyerek yeniden doldurmanız gerekir. Devam?")) return;
   try {
-    const { data, error } = await SB.rpc("stok_temizle", { p_sifre: SIFRE });
+    const { data, error } = await SB.rpc("stok_temizle", { ...yetkiArg(SIFRE) });
     if (error) throw error;
     alert((data.silinen ?? 0) + " stok kaydı silindi. Şimdi Baseline yükleyin.");
     await stokGetir();
@@ -1277,7 +1281,7 @@ async function stokUygula() {
     const fn = mod === "baseline" ? "stok_baseline" : "stok_malkabul";
     // p_zorla YALNIZCA gerektiğinde gönderilir: böylece kurulum.sql henüz
     // çalıştırılmamış eski veritabanında da eski imza ({p_sifre,p_kalemler}) çalışır.
-    const args = { p_sifre: SIFRE, p_kalemler: kalemler };
+    const args = { ...yetkiArg(SIFRE), p_kalemler: kalemler };
     if (zorla) args.p_zorla = true;
 
     const { data, error } = await SB.rpc(fn, args);
@@ -1322,7 +1326,7 @@ let YUKLEMELER = [];
 async function yuklemeGetir() {
   const kutu = document.getElementById("yuklemeIcerik");
   try {
-    const { data, error } = await SB.rpc("stok_yukleme_liste", { p_sifre: SIFRE, p_adet: 30 });
+    const { data, error } = await SB.rpc("stok_yukleme_liste", { ...yetkiArg(SIFRE), p_adet: 30 });
     if (error) throw error;
     YUKLEMELER = data || [];
     cizYukleme();
@@ -1396,7 +1400,7 @@ async function yuklemeGeriAl(id) {
       + " (" + y.kalem_sayisi + " kalem)\n\n" + uyari + "\n\nGeri alınsın mı?")) return;
 
   try {
-    const { data, error } = await SB.rpc("stok_yukleme_geri_al", { p_sifre: SIFRE, p_id: id });
+    const { data, error } = await SB.rpc("stok_yukleme_geri_al", { ...yetkiArg(SIFRE), p_id: id });
     if (error) throw error;
     alert((data.adet ?? 0) + " kalem geri alındı.");
     await stokGetir();

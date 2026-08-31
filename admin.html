@@ -47,7 +47,7 @@
       <b>Kaptan ekle</b>
       <input id="kAd" placeholder="Ad Soyad" oninput="kaptanKodGuncelle()">
       <input id="kKod" placeholder="kullanıcı adı (otomatik)" maxlength="10" oninput="this.dataset.elle='1'" autocapitalize="off">
-      <input id="kPin" placeholder="PIN (3-12 hane)" maxlength="12" inputmode="numeric">
+      <input id="kPin" placeholder="PIN (en az 6 hane)" maxlength="12" inputmode="numeric">
       <select id="kDep" title="Departman"><option value="bar">Bar</option><option value="mutfak">Mutfak</option><option value="hepsi">Hepsi</option></select>
       <button class="gb" onclick="kaptanEkle()">+ Ekle</button>
     </div>
@@ -95,8 +95,11 @@ async function giris() {
   if (!d) return;
   btn.disabled = true; btn.textContent = "..."; err.textContent = "";
   try {
-    const { error } = await SB.rpc("katalog_giris", { p_sifre: d });
-    if (error) throw error;
+    const g = await sifreIleGiris("admin_giris", d, async () => {
+      const { error } = await SB.rpc("katalog_giris", { p_sifre: d });
+      return error ? { ok: false, hata: (error.message || "").includes("Sifre") ? "Sifre hatali" : "Baglanti" } : { ok: true };
+    });
+    if (!g.ok) throw new Error(g.hata || "Sifre hatali");
     SIFRE = d; sessionStorage.setItem("gurok_admin_sifre", d); oturumDamgala("gurok_admin"); basla();
   } catch (e) {
     err.textContent = (e.message || "").includes("Sifre") ? "Şifre hatalı." : "Bağlantı kurulamadı.";
@@ -142,7 +145,7 @@ async function listeYukle() {
   kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
   try {
     // Yeni imza kimlik ister; SQL henüz uygulanmadıysa eski tek-argümanlı çağrıya düş.
-    let { data, error } = await SB.rpc("katalog_getir", { p_liste: LISTE, p_sifre: SIFRE });
+    let { data, error } = await SB.rpc("katalog_getir", { p_liste: LISTE, ...yetkiArg(SIFRE) });
     if (error && /does not exist|Could not find/i.test(error.message || "")) {
       ({ data, error } = await SB.rpc("katalog_getir", { p_liste: LISTE }));
     }
@@ -211,7 +214,7 @@ async function alanKaydet(inp, alan) {
   inp.disabled = true;
   try {
     const { error } = await SB.rpc("katalog_duzelt", {
-      p_sifre: SIFRE, p_liste: LISTE, p_kod: kod,
+      ...yetkiArg(SIFRE), p_liste: LISTE, p_kod: kod,
       p_ad:  alan === "ad"    ? deger : it.a,
       p_birim: alan === "birim" ? deger : it.b,
       p_grup:  alan === "grup"  ? deger : (it.g || "")
@@ -236,7 +239,7 @@ async function minKaydet(inp) {
   inp.disabled = true;
   try {
     const { error } = await SB.rpc("urun_min_ayarla", {
-      p_sifre: SIFRE, p_kod: kod, p_min: deger > 0 ? deger : null });
+      ...yetkiArg(SIFRE), p_kod: kod, p_min: deger > 0 ? deger : null });
     if (error) throw error;
     if (it) it.min = deger > 0 ? deger : null;
     inp.classList.add("ok"); setTimeout(() => inp.classList.remove("ok"), 1000);
@@ -256,7 +259,7 @@ async function minstokKaydet(inp) {
 
   inp.disabled = true;
   try {
-    const { error } = await SB.rpc("urun_minstok_ayarla", { p_sifre: SIFRE, p_kod: kod, p_minstok: deger });
+    const { error } = await SB.rpc("urun_minstok_ayarla", { ...yetkiArg(SIFRE), p_kod: kod, p_minstok: deger });
     if (error) throw error;
     if (it) it.minstok = deger;
     inp.classList.add("ok"); setTimeout(() => inp.classList.remove("ok"), 1000);
@@ -279,7 +282,7 @@ async function urunEkle() {
 
   try {
     const { error } = await SB.rpc("katalog_ekle", {
-      p_sifre: SIFRE, p_liste: LISTE, p_kod: kod, p_ad: ad, p_birim: birim, p_grup: grup });
+      ...yetkiArg(SIFRE), p_liste: LISTE, p_kod: kod, p_ad: ad, p_birim: birim, p_grup: grup });
     if (error) throw error;
     ["yeniKod", "yeniAd", "yeniBirim", "yeniGrup"].forEach(id => document.getElementById(id).value = "");
     await listeYukle();
@@ -291,7 +294,7 @@ async function urunCikar(kod) {
   const it = kalemBul(kod);
   if (!confirm((it ? it.a : kod) + "\n\nBu ürün listeden çıkarılacak. Emin misiniz?")) return;
   try {
-    const { error } = await SB.rpc("katalog_cikar", { p_sifre: SIFRE, p_liste: LISTE, p_kod: kod });
+    const { error } = await SB.rpc("katalog_cikar", { ...yetkiArg(SIFRE), p_liste: LISTE, p_kod: kod });
     if (error) throw error;
     KALEMLER = KALEMLER.filter(k => k.k !== kod);
     cizListe();
@@ -317,7 +320,7 @@ async function tasi(kod, yon) {
   // Yeni tam sırayı kaydet (grup + grup içi sira düzeninde)
   const yeniSira = grupla(KALEMLER, mutfakMi ? mutfakKatIndex : grupIndex).flatMap(([, l]) => l.map(x => x.k));
   try {
-    const { error } = await SB.rpc("katalog_sira", { p_sifre: SIFRE, p_liste: LISTE, p_kodlar: yeniSira });
+    const { error } = await SB.rpc("katalog_sira", { ...yetkiArg(SIFRE), p_liste: LISTE, p_kodlar: yeniSira });
     if (error) throw error;
     yeniSira.forEach((k, n) => { const it = kalemBul(k); if (it) it.sira = n; });
   } catch (e) { alert("Sıra kaydedilemedi: " + (e.message || "")); await listeYukle(); }
@@ -335,7 +338,7 @@ async function pinYonetimiAc() {
   const kutu = document.getElementById("pinIcerik");
   kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
   try {
-    const { data, error } = await SB.rpc("outlet_liste", { p_sifre: SIFRE });
+    const { data, error } = await SB.rpc("outlet_liste", { ...yetkiArg(SIFRE) });
     if (error) throw error;
     const outletler = data || [];
     document.getElementById("pinCount").textContent = outletler.length + " outlet";
@@ -412,7 +415,7 @@ async function kaptanListele() {
   const kutu = document.getElementById("kaptanIcerik");
   kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
   try {
-    const { data, error } = await SB.rpc("kaptan_liste", { p_sifre: SIFRE });
+    const { data, error } = await SB.rpc("kaptan_liste", { ...yetkiArg(SIFRE) });
     if (error) throw error;
     const list = data || [];
     KAPTAN_KODLAR = new Set(list.map(k => k.kod));   // öneri çakışma kontrolü için
@@ -444,7 +447,7 @@ async function kaptanEkle() {
   if (KAPTAN_KODLAR.has(kod.toLowerCase()) &&
       !confirm(kod + " zaten kayitli. Devam ederseniz o kisinin adi, PIN'i ve departmani DEGISTIRILIR. Devam edilsin mi?")) return;
   try {
-    const { error } = await SB.rpc("kaptan_ekle", { p_sifre: SIFRE, p_kod: kod, p_ad: ad, p_pin: pin, p_departman: dep });
+    const { error } = await SB.rpc("kaptan_ekle", { ...yetkiArg(SIFRE), p_kod: kod, p_ad: ad, p_pin: pin, p_departman: dep });
     if (error) throw error;
     document.getElementById("kAd").value = "";
     document.getElementById("kKod").value = "";
@@ -456,7 +459,7 @@ async function kaptanEkle() {
 
 async function kaptanDepDegistir(kod, dep) {
   try {
-    const { error } = await SB.rpc("kaptan_departman", { p_sifre: SIFRE, p_kod: kod, p_departman: dep });
+    const { error } = await SB.rpc("kaptan_departman", { ...yetkiArg(SIFRE), p_kod: kod, p_departman: dep });
     if (error) throw error;
   } catch (e) { alert("Departman değiştirilemedi: " + (e.message || "hata")); await kaptanListele(); }
 }
@@ -465,7 +468,7 @@ async function kaptanSifre(kod) {
   if (pin === null) return;                       // iptal
   if (!/^[0-9]{3,12}$/.test(pin.trim())) { alert("PIN 3-12 haneli sayı olmalı."); return; }
   try {
-    const { error } = await SB.rpc("kaptan_pin_degistir", { p_sifre: SIFRE, p_kod: kod, p_pin: pin.trim() });
+    const { error } = await SB.rpc("kaptan_pin_degistir", { ...yetkiArg(SIFRE), p_kod: kod, p_pin: pin.trim() });
     if (error) throw error;
     alert(kod + " şifresi değiştirildi.");
   } catch (e) { alert("Değiştirilemedi: " + (e.message || "hata")); }
@@ -474,7 +477,7 @@ async function kaptanSifre(kod) {
 async function kaptanSil(kod) {
   if (!confirm(kod + " kaptanı silinsin mi?")) return;
   try {
-    const { error } = await SB.rpc("kaptan_sil", { p_sifre: SIFRE, p_kod: kod });
+    const { error } = await SB.rpc("kaptan_sil", { ...yetkiArg(SIFRE), p_kod: kod });
     if (error) throw error;
     await kaptanListele();
   } catch (e) { alert("Silinemedi: " + (e.message || "hata")); }
@@ -486,7 +489,7 @@ async function outletPinYonet(kod, ad) {
   const kutu = document.getElementById("pinIcerik");
   kutu.innerHTML = '<div class="em">Yükleniyor...</div>';
   try {
-    const { data, error } = await SB.rpc("outlet_pin_liste", { p_sifre: SIFRE, p_kod: kod });
+    const { data, error } = await SB.rpc("outlet_pin_liste", { ...yetkiArg(SIFRE), p_kod: kod });
     if (error) throw error;
     const pinler = data || [];
     document.getElementById("pinCount").textContent = pinler.length + " / 10 PIN";
@@ -525,7 +528,7 @@ async function pinEkle() {
   if (!/^[0-9]{3,12}$/.test(pin)) { alert("PIN 3-12 haneli sayı olmalı."); return; }
   try {
     const { error } = await SB.rpc("outlet_pin_ekle", {
-      p_sifre: SIFRE, p_kod: PIN_OUTLET.kod, p_etiket: etiket, p_pin: pin });
+      ...yetkiArg(SIFRE), p_kod: PIN_OUTLET.kod, p_etiket: etiket, p_pin: pin });
     if (error) throw error;
     await outletPinYonet(PIN_OUTLET.kod, PIN_OUTLET.ad);
   } catch (e) { alert("Eklenemedi: " + (e.message || "")); }
@@ -534,7 +537,7 @@ async function pinEkle() {
 async function pinSil(id) {
   if (!confirm("Bu PIN silinecek. Emin misiniz?")) return;
   try {
-    const { error } = await SB.rpc("outlet_pin_sil", { p_sifre: SIFRE, p_id: id });
+    const { error } = await SB.rpc("outlet_pin_sil", { ...yetkiArg(SIFRE), p_id: id });
     if (error) throw error;
     await outletPinYonet(PIN_OUTLET.kod, PIN_OUTLET.ad);
   } catch (e) { alert("Silinemedi: " + (e.message || "")); }
@@ -551,7 +554,7 @@ async function seedBaslat() {
   for (const { liste, kalemler } of listeler) {
     btn.textContent = "☁ " + (ok + 1) + "/" + listeler.length + " " + liste;
     try {
-      const { error } = await SB.rpc("katalog_seed", { p_sifre: SIFRE, p_liste: liste, p_kalemler: kalemler });
+      const { error } = await SB.rpc("katalog_seed", { ...yetkiArg(SIFRE), p_liste: liste, p_kalemler: kalemler });
       if (error) throw error;
       ok++;
     } catch (e) { console.error(liste, e); }

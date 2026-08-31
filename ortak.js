@@ -171,7 +171,7 @@ async function stokGizliYukle(kaptan) {
   if (!kaptan || !kaptan.kod || !kaptan.pin) return new Set();   // kimlik yoksa sorgulama
   try {
     const { data, error } = await SB.rpc("stok_gizli_kodlar",
-      { p_kaptan_kod: kaptan.kod, p_kaptan_pin: kaptan.pin });
+      kaptanArg(kaptan));
     if (error) throw error;
     const kh = rpcKimlikHatasi(data);
     if (kh) throw new Error(kh);
@@ -198,6 +198,55 @@ function miktarHaritasiTemizle(obj) {
   return temiz;
 }
 
+
+/* ---------- Oturum token'ı ----------
+   Şifre/PIN artık yalnızca giriş çağrısında gider; sonrasında kısa ömürlü token
+   kullanılır. Token sunucuda iptal edilebilir ve süresi dolar.
+   GEÇİŞ: veritabanı henüz güncellenmediyse giriş fonksiyonu bulunamaz; o durumda
+   eski şifre/PIN parametrelerine düşülür (TOKEN_MODU=false). SQL uygulandıktan
+   sonra bu dal ölür ve temizlenebilir. */
+let TOKEN = null;
+let TOKEN_MODU = false;
+
+// RPC'nin veritabanında bulunmadığını anlatan hata mı?
+function rpcYok(error) {
+  return !!error && /does not exist|Could not find/i.test(error.message || "");
+}
+
+// Depo/admin çağrıları için yetki argümanı
+function yetkiArg(eskiSifre) {
+  return TOKEN_MODU ? { p_token: TOKEN } : { p_sifre: eskiSifre };
+}
+
+// Kaptan çağrıları için yetki argümanı
+function kaptanArg(kaptan) {
+  if (TOKEN_MODU && TOKEN) return { p_token: TOKEN };
+  return kaptan ? { p_kaptan_kod: kaptan.kod, p_kaptan_pin: kaptan.pin } : {};
+}
+
+// Şifreyle giriş: önce token modeli denenir, yoksa eski yola düşülür.
+//   girisRpc : "depo_giris" | "admin_giris"
+//   eskiDogrula: token yoksa şifreyi doğrulayan geri-uyum fonksiyonu (async)
+// Dönüş: { ok, hata }
+async function sifreIleGiris(girisRpc, sifre, eskiDogrula) {
+  try {
+    const { data, error } = await SB.rpc(girisRpc, { p_sifre: sifre });
+    if (!error && data && data.ok && data.token) {
+      TOKEN = data.token; TOKEN_MODU = true;
+      return { ok: true };
+    }
+    if (!error && data && data.ok === false) return { ok: false, hata: data.hata || "Şifre hatalı." };
+    if (!rpcYok(error)) return { ok: false, hata: "Şifre hatalı." };
+  } catch (e) { return { ok: false, hata: "Bağlantı kurulamadı." }; }
+  // Eski veritabanı: token yok
+  TOKEN = null; TOKEN_MODU = false;
+  return await eskiDogrula();
+}
+
+async function oturumuKapat() {
+  if (TOKEN_MODU && TOKEN) { try { await SB.rpc("oturum_iptal", { p_token: TOKEN }); } catch (e) {} }
+  TOKEN = null; TOKEN_MODU = false;
+}
 /* ---------- Oturum süresi ----------
    Paylaşılan tablette sekme hiç kapanmıyor; damgasız oturum sabah giren kişinin
    adına akşam sipariş gitmesine yol açar. Girişler MUTLAK süreyle sınırlanır. */
