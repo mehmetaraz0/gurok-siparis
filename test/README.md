@@ -1,12 +1,24 @@
 # Testler
 
-Bağımlılık yok, kurulum yok. Node yeterli:
+İki takım var.
+
+**İstemci (tarayıcı) tarafı** — bağımlılık yok, Node yeterli:
 
 ```bash
 node test/calistir.js
 ```
 
 Tek dosya çalıştırmak için: `node test/bar.test.js`
+
+**Sunucu (SQL) tarafı** — docker gerekir, geçici Postgres açar:
+
+```bash
+bash test/sql/calistir.sh
+```
+
+Ayrıntısı [test/sql/README.md](sql/README.md). `kurulum.sql`'i gerçek
+Postgres'te baştan sona koşar; canlıda denenemeyecek şeyleri (brute-force
+kilidi gibi) orada dener.
 
 ## Ne test ediliyor
 

@@ -1,0 +1,3 @@
+# Kabuk betikleri Windows'ta da LF ile checkout edilmeli;
+# CRLF ile #!/usr/bin/env bash satiri bozulur.
+*.sh text eol=lf

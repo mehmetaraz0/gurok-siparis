@@ -10,6 +10,9 @@
 --
 --  SIFIRDAN KURULUMDA: aşağıdaki BURAYA_DEPO_SIFRE / BURAYA_ADMIN_SIFRE
 --  yerlerini değiştir (mevcut kurulumda dokunma — eskiler korunur).
+--  Değiştirmezsen betik "ŞİFRELER" bölümünde durur ve seni uyarır; bu
+--  yer tutucular herkese açık repoda yazılı olduğu için kurulmalarına
+--  izin verilmiyor.
 -- ============================================================
 
 create extension if not exists pgcrypto with schema extensions;
@@ -387,13 +390,41 @@ revoke all on public.urun_min   from anon, authenticated;
 revoke all on public.kaptan     from anon, authenticated;
 
 -- ================= ŞİFRELER (mevcut olan KORUNUR) =================
-insert into public.ayarlar (anahtar, deger)
-values ('depo_sifre', extensions.crypt('BURAYA_DEPO_SIFRE', extensions.gen_salt('bf', 10)))
-on conflict (anahtar) do nothing;
+-- MEVCUT KURULUMDA: şifre satırları zaten var, bu blok hiçbir şey yapmaz.
+-- SIFIRDAN KURULUMDA: aşağıdaki iki değeri değiştirmeden çalıştırırsanız
+-- betik BURADA DURUR. Yer tutucular herkese açık repoda yazılı; sessizce
+-- kurulmalarına izin verilmiyor.
+do $sifre$
+declare
+  v_depo  text := 'BURAYA_DEPO_SIFRE';
+  v_admin text := 'BURAYA_ADMIN_SIFRE';
+  -- Karşılaştırma değerleri PARÇALI yazıldı: yukarıdaki yer tutucuları
+  -- ara-değiştir ile toplu değiştirdiğinizde bunlar değişmesin diye.
+  s_depo  text := 'BURAYA_' || 'DEPO_SIFRE';
+  s_admin text := 'BURAYA_' || 'ADMIN_SIFRE';
+begin
+  if not exists (select 1 from public.ayarlar where anahtar = 'depo_sifre') then
+    if v_depo = s_depo then
+      raise exception 'KURULUM DURDU: depo sifresi hala yer tutucu (%). kurulum.sql icinde gercek bir sifre yazip tekrar calistirin.', s_depo;
+    end if;
+    if length(v_depo) < 12 then
+      raise exception 'KURULUM DURDU: depo sifresi en az 12 karakter olmali.';
+    end if;
+    insert into public.ayarlar (anahtar, deger)
+    values ('depo_sifre', extensions.crypt(v_depo, extensions.gen_salt('bf', 10)));
+  end if;
 
-insert into public.ayarlar (anahtar, deger)
-values ('admin_sifre', extensions.crypt('BURAYA_ADMIN_SIFRE', extensions.gen_salt('bf', 10)))
-on conflict (anahtar) do nothing;
+  if not exists (select 1 from public.ayarlar where anahtar = 'admin_sifre') then
+    if v_admin = s_admin then
+      raise exception 'KURULUM DURDU: admin sifresi hala yer tutucu (%). kurulum.sql icinde gercek bir sifre yazip tekrar calistirin.', s_admin;
+    end if;
+    if length(v_admin) < 12 then
+      raise exception 'KURULUM DURDU: admin sifresi en az 12 karakter olmali.';
+    end if;
+    insert into public.ayarlar (anahtar, deger)
+    values ('admin_sifre', extensions.crypt(v_admin, extensions.gen_salt('bf', 10)));
+  end if;
+end $sifre$;
 
 -- ================= OUTLET TOHUMU (PIN'ler KORUNUR) =================
 insert into public.outletler (kod, ad, tur) values
