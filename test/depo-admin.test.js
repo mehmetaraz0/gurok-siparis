@@ -41,7 +41,7 @@ console.log("=== 1. Ortak şifre yolu KODDAN KALDIRILDI ===");
 
 console.log("=== 2. Doğru kullanıcı adı + PIN ===");
 {
-  const t = depoKur({ rpc: girisYaniti("depo", "depocu1", "Depo Personeli", "TKN_D") });
+  const t = depoKur({ rpc: girisYaniti("depo_yonetici", "depocu1", "Depo Personeli", "TKN_D") });
   t.getEl("depoKod").value = "DEPOCU1";        // büyük harf de olmalı
   t.getEl("depoPin").value = "111111";
   await t.ev("giris()");
@@ -94,6 +94,49 @@ for (const [rol, ekran] of [["kaptan", "sipariş"], ["admin", "yönetim"]]) {
   ok(rol + ": açılan oturum sunucuda kapatıldı",
       t.cagrilar.some(c => c.ad === "oturum_iptal" && c.arg.p_token === "TKN_" + rol));
   ok(rol + ": TOKEN bırakılmadı", t.ev("TOKEN") === null);
+}
+
+console.log("=== 4b. Kademeye göre ekran: hangi sekme görünüyor ===");
+{
+  // Arayüz gizlemesi SUNUCUNUN AYNASI, güvenlik değil: yetkinin kendisi
+  // depo_yetki()'de. Buradaki amaç çalışmayacak düğme göstermemek.
+  const gorunur = id => t => t.getEl(id).style.display !== "none";
+  const senaryolar = [
+    ["depo_personel",      { skTalep: true,  skEnv: false, skTuk: false, skStok: true,
+                             stokYukleKutu: false, stokSilKutu: false, yuklemeGecmisi: false }],
+    ["depo_asistan",       { skTalep: true,  skEnv: true,  skTuk: true,  skStok: true,
+                             stokYukleKutu: true,  stokSilKutu: false, yuklemeGecmisi: true }],
+    ["depo_yonetici",      { skTalep: true,  skEnv: true,  skTuk: true,  skStok: true,
+                             stokYukleKutu: true,  stokSilKutu: true,  yuklemeGecmisi: true }],
+    ["departman_yonetici", { skTalep: false, skEnv: true,  skTuk: true,  skStok: true,
+                             stokYukleKutu: false, stokSilKutu: false, yuklemeGecmisi: false }],
+  ];
+  for (const [rol, beklenen] of senaryolar) {
+    const t = depoKur({ rpc: girisYaniti(rol, "u", "Kullanici", "TKN_" + rol) });
+    t.getEl("depoKod").value = "u";
+    t.getEl("depoPin").value = "111111";
+    await t.ev("giris()");
+    ok(rol + ": giriş yapıldı", t.ev("GIRISLI") === true);
+    const yanlis = Object.keys(beklenen).filter(id => gorunur(id)(t) !== beklenen[id]);
+    ok(rol + ": ekran doğru", yanlis.length === 0, "yanlış olanlar: " + yanlis.join(", "));
+    ok(rol + ": rol başlıkta yazıyor",
+        t.getEl("depoKim").textContent.length > "👤 Kullanici".length,
+        t.getEl("depoKim").textContent);
+  }
+}
+
+console.log("=== 4c. Departman yöneticisi TALEP sorgusu ATMAZ ===");
+{
+  // Otomatik tazeleme 15 saniyede bir yenile() çağırıyor; talep izni yoksa
+  // sunucuya boşuna gidip hata almasın.
+  const t = depoKur({ rpc: girisYaniti("departman_yonetici", "dym", "Mutfak Sefi", "TKN_DY") });
+  t.getEl("depoKod").value = "dym";
+  t.getEl("depoPin").value = "444444";
+  await t.ev("giris()");
+  t.cagrilar.length = 0;              // giriş çağrısını say dışı bırak
+  await t.ev("yenile()");
+  ok("depo_liste çağrılmadı", !t.cagrilar.some(c => c.ad === "depo_liste"),
+      JSON.stringify(t.cagrilar.map(c => c.ad)));
 }
 
 console.log("=== 5. Yenileme / süre / çıkış ===");
@@ -151,7 +194,7 @@ console.log("=== 6. Doğru kullanıcı adı + parola ===");
 }
 
 console.log("=== 7. Başka rollerle YÖNETİM ekranına girilemez ===");
-for (const [rol, ekran] of [["kaptan", "sipariş"], ["depo", "depo"]]) {
+for (const [rol, ekran] of [["kaptan", "sipariş"], ["depo_yonetici", "depo"]]) {
   const t = adminKur({ rpc: girisYaniti(rol, "x", "Biri", "TKN_" + rol) });
   t.getEl("admKod").value = "x"; t.getEl("admParola").value = "UzunParola2026!";
   await t.ev("giris()");

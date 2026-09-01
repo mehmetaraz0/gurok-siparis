@@ -104,9 +104,12 @@ alter table public.kaptan add column if not exists departman text not null defau
 alter table public.kaptan drop constraint if exists kaptan_departman_chk;
 alter table public.kaptan add constraint kaptan_departman_chk check (departman in ('bar','mutfak','hepsi'));
 -- Rol: bu kişi nereye giriyor.
---   'kaptan' -> bar/mutfak sipariş ekranı (bar.html)
---   'depo'   -> depo toplama ekranı (depo.html)
---   'admin'  -> liste/kullanıcı yönetimi (admin.html)
+--   'kaptan'             -> bar/mutfak sipariş ekranı (bar.html)
+--   'depo_personel'      -> depo: talepler + onay + stok listesi
+--   'depo_asistan'       -> + kalem envanteri/tüketim + stok yükleme
+--   'depo_yonetici'      -> + yükleme geri alma + stok silme
+--   'departman_yonetici' -> SALT OKUNUR, kendi departmanı (FM müdürü, mutfak şefi)
+--   'admin'              -> liste/kullanıcı yönetimi (admin.html)
 -- Depo girişi eskiden HERKESİN kullandığı tek ortak şifreydi; sayaç kişi
 -- başına tutulamadığı için kilit de kapı başınaydı ve yabancı biri 5 yanlış
 -- denemeyle tüm depoyu 15 dakika dışarıda bırakabiliyordu (denetim N-1).
@@ -114,7 +117,13 @@ alter table public.kaptan add constraint kaptan_departman_chk check (departman i
 -- bağlanıyor ve bu kapanıyor. Yan kazanç: oturum artık KİMİN olduğunu biliyor.
 alter table public.kaptan add column if not exists rol text not null default 'kaptan';
 alter table public.kaptan drop constraint if exists kaptan_rol_chk;
-alter table public.kaptan add constraint kaptan_rol_chk check (rol in ('kaptan','depo','admin'));
+-- GEÇİŞ: tek 'depo' rolü üç kademeye ayrıldı. Mevcut depo kullanıcıları
+-- YETKİ KAYBETMESİN diye en genişe taşınıyor; yönetim panelinden gerektiği
+-- gibi asistan/personel'e düşürülür. (Genişten daralt, tersi değil: sessizce
+--  yetki kaybı canlıda işi durdurur, fazlalık yetki durdurmaz.)
+update public.kaptan set rol = 'depo_yonetici' where rol = 'depo';
+alter table public.kaptan add constraint kaptan_rol_chk check (rol in
+  ('kaptan','depo_personel','depo_asistan','depo_yonetici','departman_yonetici','admin'));
 -- Girişte hep lower(kod) eşleştiği için kod da küçük harfe sabitlenir. Aksi halde
 -- 'Maraz' + 'maraz' iki ayrı satır olur, giriş hangisine düşeceği belirsizleşir.
 update public.kaptan set kod = lower(kod) where kod <> lower(kod);
@@ -237,6 +246,38 @@ begin
     'departman', coalesce(v_dep,'hepsi'));
 end $$;
 
+/* Depo tarafı izinleri.  Kademeler TEK BİR MERDİVEN DEĞİL: departman
+   yöneticisi tüketimi görebilir ama sipariş onaylayamaz; personel sipariş
+   onaylar ama tüketimi göremez. O yüzden seviye sayısı değil, izin listesi.
+
+   İzinler:
+     talep      : talepleri görmek, miktar girmek, onaylamak
+     stok_gor   : stok listesini görüntülemek
+     envanter   : kalem envanteri + tüketim (AYNI veri, aynı RPC)
+     stok_yukle : baseline / mal kabul yüklemek, yükleme geçmişi
+     stok_sil   : yükleme geri alma, katalog dışını temizleme, tüm stoğu silme */
+create or replace function public.depo_yetki(p_rol text, p_izin text)
+returns boolean language sql immutable as $$
+  select case p_izin
+    when 'talep'      then p_rol in ('depo_personel','depo_asistan','depo_yonetici')
+    when 'stok_gor'   then p_rol in ('depo_personel','depo_asistan','depo_yonetici','departman_yonetici')
+    when 'envanter'   then p_rol in ('depo_asistan','depo_yonetici','departman_yonetici')
+    when 'stok_yukle' then p_rol in ('depo_asistan','depo_yonetici')
+    when 'stok_sil'   then p_rol in ('depo_yonetici')
+    else false
+  end;
+$$;
+
+-- Oturum tipi rolden türer. Depo tarafındaki DÖRT rol de tip='depo' oturumu
+-- açar; ayrım oturum tipinde değil, RPC başına izin kontrolünde yapılır.
+create or replace function public.rol_oturum_tipi(p_rol text)
+returns text language sql immutable as $$
+  select case when p_rol = 'admin' then 'admin'
+              when p_rol in ('depo_personel','depo_asistan','depo_yonetici','departman_yonetici')
+                then 'depo'
+              else 'kaptan' end;
+$$;
+
 -- Parola kuralı role göre değişir.
 --   kaptan/depo : tablette hızlı girilsin diye 6-12 haneli sayısal PIN.
 --   admin       : yönetim yetkisi taşıdığı için serbest metin, en az 10 karakter.
@@ -285,6 +326,25 @@ returns void language sql security definer set search_path = public as $$
   delete from oturum
    where tip in ('kaptan','depo','admin') and lower(coalesce(ref,'')) = lower(coalesce(p_kod,''));
 $$;
+
+/* Depo tarafı RPC'lerinin tek giriş kontrolü. Yetkisizse RAISE eder;
+   yetkiliyse {rol, departman} döner -- departman yöneticisinin verisini
+   kendi departmanına daraltmak için gerekiyor.
+
+   Not: ortak şifreyle açılmış eski oturumlarda ref NULL'dı; join tutmadığı
+   için onlar da reddedilir. Ortak şifre 1 Eyl 2026'da zaten kapatıldı. */
+create or replace function public.depo_izin(p_token text, p_izin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_rol text; v_dep text;
+begin
+  select k.rol, k.departman into v_rol, v_dep
+    from oturum o join kaptan k on lower(k.kod) = lower(o.ref)
+   where o.token_hash = encode(extensions.digest(coalesce(p_token,''),'sha256'),'hex')
+     and o.son_kullanma > now() and o.tip = 'depo' and k.aktif;
+  if v_rol is null then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  if not depo_yetki(v_rol, p_izin) then raise exception 'Bu islem icin yetkiniz yok'; end if;
+  return jsonb_build_object('rol', v_rol, 'departman', coalesce(v_dep,'hepsi'));
+end $$;
 
 create or replace function public.oturum_depo(p_token text)
 returns boolean language sql security definer set search_path = public, extensions as $$
@@ -495,7 +555,8 @@ begin
   -- hesaplara gecilmis ve o kapi kapatilmistir. Betik onu geri kurmaya
   -- calismamali, yer tutucu yuzunden durmamali.
   if not exists (select 1 from public.ayarlar where anahtar = 'depo_sifre')
-     and not exists (select 1 from public.kaptan where rol = 'depo') then
+     and not exists (select 1 from public.kaptan
+                        where rol in ('depo_personel','depo_asistan','depo_yonetici')) then
     if v_depo = s_depo then
       raise exception 'KURULUM DURDU: depo sifresi hala yer tutucu (%). kurulum.sql icinde gercek bir sifre yazip tekrar calistirin.', s_depo;
     end if;
@@ -789,7 +850,7 @@ create or replace function public.depo_liste(p_token text, p_tarih date default 
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_tarih date := coalesce(p_tarih, (now() at time zone 'Europe/Istanbul')::date);
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'talep');
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'siparis_no', siparis_no, 'outlet_kod', outlet_kod, 'outlet_ad', outlet_ad,
@@ -807,8 +868,13 @@ returns jsonb language plpgsql security definer set search_path = public, extens
 declare
   v_bas date := coalesce(p_bas, (now() at time zone 'Europe/Istanbul')::date);
   v_bit date := coalesce(p_bit, (now() at time zone 'Europe/Istanbul')::date);
+  v_izin jsonb;
+  v_dep  text;
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  v_izin := depo_izin(p_token, 'envanter');
+  -- Departman yöneticisi dışındakiler tüm birimleri görür.
+  v_dep := case when v_izin->>'rol' = 'departman_yonetici'
+                then v_izin->>'departman' else 'hepsi' end;
   if v_bit < v_bas then raise exception 'Bitis tarihi baslangictan once olamaz'; end if;
   if v_bit - v_bas > 92 then raise exception 'En fazla 92 gunluk aralik sorgulanabilir'; end if;
   return coalesce((
@@ -817,14 +883,20 @@ begin
              'outlet_ad', outlet_ad, 'bolum', bolum, 'gonderen', gonderen, 'kalemler', kalemler,
              'gonderilme_saati', gonderilme_saati, 'durum', durum, 'onay_saati', onay_saati)
              order by gonderilme_saati)
-      from siparisler where tarih between v_bas and v_bit), '[]'::jsonb);
+      from siparisler s where s.tarih between v_bas and v_bit
+       -- DEPARTMAN KAPSAMI: departman yöneticisi yalnız kendi birimlerini
+       -- görür (mutfak şefi mutfakları, bar müdürü barları). Diğer depo
+       -- rollerinde departman 'hepsi' olduğu için koşul her satırı geçirir.
+       and kaptan_birim_yetkili(v_dep,
+             (select o.tur from outletler o where o.kod = s.outlet_kod))
+      ), '[]'::jsonb);
 end $$;
 
 create or replace function public.depo_kalem_guncelle(p_token text, p_siparis_no text, p_kalem_kod text, p_onay int)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_durum text;
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'talep');
   if p_onay is null or p_onay < 0 or p_onay > 100000 then raise exception 'Gecersiz miktar'; end if;
   select durum into v_durum from siparisler where siparis_no = p_siparis_no;
   if not found then raise exception 'Siparis bulunamadi'; end if;
@@ -843,7 +915,7 @@ create or replace function public.depo_durum_degistir(p_token text, p_siparis_no
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_saat timestamptz; v_eski text; v_engel text;
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'talep');
   if p_durum not in ('talep','onaylandi') then raise exception 'Gecersiz durum'; end if;
   select durum into v_eski from siparisler where siparis_no = p_siparis_no;
   if not found then raise exception 'Siparis bulunamadi'; end if;
@@ -892,7 +964,7 @@ end $$;
 create or replace function public.onay_stok_kontrol(p_token text, p_siparis_no text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'talep');
   return coalesce((
     select jsonb_agg(jsonb_build_object('kod', s.kod, 'ad', s.ad, 'mevcut', st.miktar,
              'dusecek', s.mik, 'sonra', st.miktar - s.mik, 'min_stok', um.min_stok))
@@ -955,7 +1027,7 @@ declare
   v_kalemler jsonb; v_imza text; v_adet int; v_toplam numeric;
   v_eski timestamptz; v_eskimod text; v_mukerrer boolean := false;
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'stok_yukle');
   if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
 
   -- Dosyada aynı kod birden çok kez geçebilir (çok sayfalı Excel). Baseline bir
@@ -1010,7 +1082,7 @@ declare
   v_kalemler jsonb; v_imza text; v_adet int; v_toplam numeric;
   v_eski timestamptz; v_eskimod text; v_mukerrer boolean := false;
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'stok_yukle');
   if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
 
   -- Mal kabulde aynı kod birden çok satırda gelebilir → TOPLANIR (gerçekten iki
@@ -1062,7 +1134,7 @@ end $$;
 create or replace function public.stok_yukleme_liste(p_token text, p_adet int default 30)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'stok_yukle');
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'id', t.id, 'tarih', t.tarih, 'mod', t.mod, 'kalem_sayisi', t.kalem_sayisi,
@@ -1083,7 +1155,7 @@ create or replace function public.stok_yukleme_geri_al(p_token text, p_id uuid)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_mod text; v_kalemler jsonb; v_zaman timestamptz; v_geri boolean; v_adet int;
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'stok_sil');
   select mod, kalemler, olusturma, geri_alindi
     into v_mod, v_kalemler, v_zaman, v_geri
     from stok_yukleme where id = p_id;
@@ -1116,7 +1188,7 @@ end $$;
 create or replace function public.stok_liste(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'stok_gor');
   return coalesce((select jsonb_agg(jsonb_build_object('kod',kod,'ad',ad,'birim',birim,
     'miktar',miktar,'guncelleme',guncelleme) order by kod) from stok), '[]'::jsonb);
 end $$;
@@ -1126,7 +1198,7 @@ create or replace function public.stok_katalog_disi_sil(p_token text, p_kodlar j
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_silinen int;
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'stok_sil');
   if jsonb_typeof(p_kodlar) <> 'array' or jsonb_array_length(p_kodlar) = 0 then
     raise exception 'Katalog listesi bos'; end if;
   with sil as (
@@ -1140,7 +1212,7 @@ create or replace function public.stok_temizle(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_silinen int;
 begin
-  if not oturum_depo(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  perform depo_izin(p_token, 'stok_sil');
   with sil as (delete from stok returning 1) select count(*) into v_silinen from sil;
   return jsonb_build_object('ok', true, 'silinen', v_silinen);
 end $$;
@@ -1326,7 +1398,7 @@ begin
   v_rol := coalesce(v_kimlik->>'rol', 'kaptan');
   return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_kimlik->>'ad',
     'departman', v_kimlik->>'departman', 'rol', v_rol,
-    'token', oturum_ac(case when v_rol in ('depo','admin') then v_rol else 'kaptan' end, v_kod));
+    'token', oturum_ac(rol_oturum_tipi(v_rol), v_kod));
 end $$;
 
 -- Admin: kaptan listesi (PIN yok)
@@ -1352,9 +1424,12 @@ begin
   if coalesce(p_kod,'') !~ '^[A-Za-z0-9]{1,10}$' then raise exception 'Kod 1-10 harf/rakam olmali'; end if;
   if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
   if not sifre_kurali_uygun(v_rol, p_pin) then raise exception '%', sifre_kurali_metni(v_rol); end if;
-  if v_rol not in ('kaptan','depo','admin') then raise exception 'Gecersiz rol'; end if;
-  -- Depo ve yönetici birim seçmiyor; departman onlar için anlamsız.
-  if v_rol in ('depo','admin') then v_dep := 'hepsi'; end if;
+  if v_rol not in ('kaptan','depo_personel','depo_asistan','depo_yonetici','departman_yonetici','admin') then raise exception 'Gecersiz rol'; end if;
+  -- Departman YALNIZCA kaptan ve departman yöneticisi için anlamlı:
+  -- kaptan hangi birimlere sipariş açacağını, departman yöneticisi hangi
+  -- birimlerin verisini göreceğini oradan alıyor. Depo kademeleri ve admin
+  -- tüm tesise bakar.
+  if v_rol not in ('kaptan','departman_yonetici') then v_dep := 'hepsi'; end if;
   if v_dep not in ('bar','mutfak','hepsi') then raise exception 'Gecersiz departman'; end if;
   -- kod küçük harfe normalize edilir (giriş kasadan bağımsız çalışsın)
   insert into kaptan (kod, ad, pin, aktif, departman, rol)
@@ -1371,11 +1446,12 @@ create or replace function public.kaptan_rol(p_token text, p_kod text, p_rol tex
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
-  if coalesce(p_rol,'') not in ('kaptan','depo','admin') then raise exception 'Gecersiz rol'; end if;
+  if coalesce(p_rol,'') not in ('kaptan','depo_personel','depo_asistan','depo_yonetici','departman_yonetici','admin') then raise exception 'Gecersiz rol'; end if;
   -- Parola kuralı role göre: sayısal PIN'li biri admin yapılırsa parolası
   -- kurala uymaz. Rolü değiştiren admin yeni parolayı ayrıca atamalı.
   update kaptan set rol = p_rol,
-                    departman = case when p_rol in ('depo','admin') then 'hepsi' else departman end
+                    departman = case when p_rol in ('kaptan','departman_yonetici')
+                                     then departman else 'hepsi' end
    where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kullanici bulunamadi'; end if;
   -- Rol değişti: eski tipteki oturumu artık yanlış ekrana ait, kapat.

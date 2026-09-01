@@ -220,18 +220,51 @@ function girisHatasiTr(h, varsayilan) {
   return varsayilan || "Şifre hatalı.";
 }
 
+/* Rol -> hangi ekrana ait. Yanlış ekrana giren kişiye nereye gitmesi
+   gerektiğini söylemek için. */
+const ROL_EKRANI = {
+  kaptan: "sipariş",
+  depo_personel: "depo", depo_asistan: "depo", depo_yonetici: "depo",
+  departman_yonetici: "depo",
+  admin: "yönetim",
+};
+
+/* Depo ekranındaki izin matrisi. SUNUCUDAKİNİN AYNASI -- burası yalnızca
+   arayüzü sadeleştirmek için; yetkinin kendisi sunucuda (depo_yetki).
+   Buradaki bir hata veri sızdırmaz, yalnızca kullanıcıya çalışmayan bir
+   düğme gösterir. */
+const DEPO_IZIN = {
+  depo_personel:      ["talep", "stok_gor"],
+  depo_asistan:       ["talep", "stok_gor", "envanter", "stok_yukle"],
+  depo_yonetici:      ["talep", "stok_gor", "envanter", "stok_yukle", "stok_sil"],
+  departman_yonetici: ["stok_gor", "envanter"],
+};
+
+function depoIzinVar(rol, izin) {
+  const l = DEPO_IZIN[rol];
+  return !!l && l.indexOf(izin) >= 0;
+}
+
+const ROL_ADI = {
+  depo_personel: "Depo personeli", depo_asistan: "Depo asistanı",
+  depo_yonetici: "Depo yöneticisi", departman_yonetici: "Departman yöneticisi",
+  kaptan: "Kaptan", admin: "Yönetici",
+};
+
 /* Kullanıcı adı + PIN/parola ile giriş. ÜÇ ekran da (bar, depo, yönetim)
    AYNI kapıyı kullanır (kaptan_giris): kapı sayısı arttıkça deneme sayacını
    doğru beslemeyi unutma riski artıyor — H-2'nin dersi buydu. Ortak şifreli
    girişler (depo_giris / admin_giris) 1 Eyl 2026'da kapatıldı.
 
-   beklenenRol: bu ekranın kabul ettiği rol ("kaptan" | "depo" | "admin"). Sunucu
+   beklenenRol: bu ekranın kabul ettiği rol(ler). Tek metin ya da dizi olabilir;
+   depo ekranı dört rol kabul ediyor (üç kademe + departman yöneticisi). Sunucu
    oturumu role göre açtığı için yanlış ekrana giren kişi zaten hiçbir şey
    yapamaz; ama "giriş oldu" görünüp sonra her işlemin sessizce reddedilmesi
    kötü bir deneyim. Burada açıkça söylüyoruz.
 
    Dönüş: { ok:true, kod, ad, departman, rol } | { ok:false, hata }        */
 async function kisiGirisi(kod, pin, beklenenRol) {
+  const kabul = Array.isArray(beklenenRol) ? beklenenRol : [beklenenRol];
   try {
     const { data, error } = await SB.rpc("kaptan_giris", { p_kod: kod, p_pin: pin });
     // Sunucu hatalı girişte exception atmaz, {ok:false, hata} döner (deneme
@@ -242,13 +275,12 @@ async function kisiGirisi(kod, pin, beklenenRol) {
     if (!data.token) return { ok: false, hata: "Sunucu oturum açamadı." };
 
     const rol = data.rol || "kaptan";
-    if (rol !== beklenenRol) {
+    if (kabul.indexOf(rol) < 0) {
       // Oturum sunucuda açıldı ama bu ekrana ait değil: sahipsiz bırakma, kapat.
       TOKEN = data.token;
       await oturumuKapat();
-      const EKRAN = { kaptan: "sipariş", depo: "depo", admin: "yönetim" };
       return { ok: false,
-               hata: "Bu hesap " + (EKRAN[rol] || rol) + " ekranına ait. Oradan girin." };
+               hata: "Bu hesap " + (ROL_EKRANI[rol] || rol) + " ekranına ait. Oradan girin." };
     }
     TOKEN = data.token;
     return { ok: true, kod: data.kod || kod, ad: data.ad,

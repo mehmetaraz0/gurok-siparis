@@ -13,439 +13,414 @@ begin
   end if;
 end $$;
 
+/* Bir depo oturumunun HANGI izinlere sahip oldugunu tek satirda dondurur.
+   Her prob SALT OKUNUR ya da etkisiz secilmistir:
+     stok_sil probu gen_random_uuid() ile cagrilir -- yetki gecerse "bulunamadi"
+     hatasi alir, yetki gecmezse "yetkiniz yok". Ikisini mesajdan ayiriyoruz.  */
+create or replace function pg_temp.izinler(p_token text) returns text
+language plpgsql as $$
+declare r text := '';
+begin
+  begin perform depo_liste(p_token, current_date);                   r := r || 'talep ';
+  exception when others then null; end;
+
+  begin perform stok_liste(p_token);                                 r := r || 'stok_gor ';
+  exception when others then null; end;
+
+  begin perform depo_envanter(p_token, current_date, current_date);  r := r || 'envanter ';
+  exception when others then null; end;
+
+  begin perform stok_yukleme_liste(p_token, 5);                      r := r || 'stok_yukle ';
+  exception when others then null; end;
+
+  begin
+    perform stok_yukleme_geri_al(p_token, gen_random_uuid());
+    r := r || 'stok_sil ';
+  exception when others then
+    if sqlerrm not like '%yetkiniz yok%' and sqlerrm not like '%Oturum gecersiz%'
+      then r := r || 'stok_sil ';
+    end if;
+  end;
+  return trim(r);
+end $$;
+
 do $t$
 declare
-  v_depo_token  text;
   v_admin_token text;
-  v_kap_token   text;
-  v_kap_token2  text;
-  r jsonb;
-  n int;
-  v_red boolean;   -- reddedildi mi (raise VEYA {ok:false})
+  v_token       text;
+  v_token2      text;
+  r     jsonb;
+  n     int;
+  v_red boolean;
+  v_izin text;
+  v_hata text;
 begin
-  raise notice '=== 1. Depo girisi ===';
 
-  r := depo_giris('TestDepoSifre2026!');
-  perform pg_temp.bekle('dogru sifre kabul edildi', (r->>'ok')::boolean);
-  perform pg_temp.bekle('token dondu', length(coalesce(r->>'token','')) = 64);
-  v_depo_token := r->>'token';
+raise notice '=== 0. HAZIRLIK: yonetici girisi ve kullanicilar ===';
+  delete from kaptan_deneme;
+  r := admin_giris('TestAdminSifre2026!');
+  perform pg_temp.bekle('ortak yonetici sifresi ile giris', (r->>'ok')::boolean);
+  v_admin_token := r->>'token';
 
+  perform kaptan_ekle(v_admin_token, 'maraz',    'Bar Kaptani',     '123456', 'bar',    'kaptan');
+  perform kaptan_ekle(v_admin_token, 'mutfakci', 'Mutfak Kaptani',  '123456', 'mutfak', 'kaptan');
+  perform kaptan_ekle(v_admin_token, 'dp',       'Depo Personeli',  '111111', 'hepsi',  'depo_personel');
+  perform kaptan_ekle(v_admin_token, 'da',       'Depo Asistani',   '222222', 'hepsi',  'depo_asistan');
+  perform kaptan_ekle(v_admin_token, 'dy',       'Depo Yoneticisi', '333333', 'hepsi',  'depo_yonetici');
+  perform kaptan_ekle(v_admin_token, 'dymut',    'Mutfak Sefi',     '444444', 'mutfak', 'departman_yonetici');
+  perform kaptan_ekle(v_admin_token, 'dybar',    'Bar Muduru',      '555555', 'bar',    'departman_yonetici');
+  perform kaptan_ekle(v_admin_token, 'yon1',     'Yonetici Bir',    'UzunParola2026!',  'hepsi', 'admin');
+  perform kaptan_ekle(v_admin_token, 'yon2',     'Yonetici Iki',    'BaskaParola2026!', 'hepsi', 'admin');
+  perform pg_temp.bekle('9 kullanici olusturuldu', (select count(*) from kaptan) = 9);
+
+raise notice '=== 1. Token uretimi ve saklanmasi ===';
+  r := kaptan_giris('DY', '333333');                  -- buyuk harf de olmali
+  perform pg_temp.bekle('buyuk/kucuk harf farketmiyor', (r->>'ok')::boolean);
+  perform pg_temp.bekle('token 64 hane', length(coalesce(r->>'token','')) = 64);
+  v_token := r->>'token';
   perform pg_temp.bekle('token DB-de ACIK METIN olarak DURMUYOR',
-    not exists (select 1 from oturum where token_hash = v_depo_token));
+    not exists (select 1 from oturum where token_hash = v_token));
   perform pg_temp.bekle('token DB-de sha256 hash olarak duruyor',
     exists (select 1 from oturum
-             where token_hash = encode(extensions.digest(v_depo_token,'sha256'),'hex')));
+             where token_hash = encode(extensions.digest(v_token,'sha256'),'hex')));
+  perform pg_temp.bekle('oturum KIMIN oldugunu biliyor',
+    (select lower(ref) from oturum
+      where token_hash = encode(extensions.digest(v_token,'sha256'),'hex')) = 'dy');
 
-  raise notice '=== 2. Token calisiyor ===';
-  perform pg_temp.bekle('stok_liste token ile calisti', stok_liste(v_depo_token) is not null);
-
-  r := depo_liste(v_depo_token, current_date);
-  perform pg_temp.bekle('depo_liste token ile calisti', r is not null);
-
-  raise notice '=== 3. Sahte / bos token reddediliyor ===';
-  -- Veri RPC-leri gecersiz token-da RAISE eder. Bu dogru: giris fonksiyonlarinin
-  -- {ok:false} donmesi gerekiyordu cunku raise sayac INSERT-ini geri aliyordu;
-  -- burada geri alinacak bir sayac yok.
+raise notice '=== 2. Sahte / bos / suresi dolmus token ===';
   v_red := false;
   begin perform stok_liste('sahtetoken0123456789');
   exception when others then v_red := true; end;
   perform pg_temp.bekle('sahte token reddedildi', v_red);
+
   v_red := false;
   begin perform stok_liste(null);
   exception when others then v_red := true; end;
   perform pg_temp.bekle('bos token reddedildi', v_red);
 
-  raise notice '=== 4. YANLIS sifre sayaci ARTIRIYOR (H-2: transaction geri almiyor) ===';
+  update oturum set son_kullanma = now() - interval '1 minute'
+   where token_hash = encode(extensions.digest(v_token,'sha256'),'hex');
+  v_red := false;
+  begin perform stok_liste(v_token);
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('suresi dolmus token reddedildi', v_red);
+  -- DIKKAT: bu silme YONETICI oturumunu da goturuyor; hemen tazele, yoksa
+  -- sonraki admin cagrilari 'Oturum gecersiz' verir ve testler yanlis
+  -- sebeple yesil yanar.
+  delete from oturum;
+  v_admin_token := admin_giris('TestAdminSifre2026!')->>'token';
+
+raise notice '=== 3. ORTAK SIFRE: sayac ve kilit (canlida denenemez) ===';
   delete from kaptan_deneme;
   r := depo_giris('yanlisSifre');
   perform pg_temp.bekle('yanlis sifre reddedildi', (r->>'ok')::boolean is false);
   select count(*) into n from kaptan_deneme where kod = '#depo';
+  -- H-2: giris fonksiyonlari RAISE etseydi transaction geri alinir, sayac artmazdi.
   perform pg_temp.bekle('deneme KAYDEDILDI (raise etseydi geri alinirdi)', n = 1);
 
-  raise notice '=== 5. BRUTE-FORCE KILIDI (canlida denenemez) ===';
   delete from kaptan_deneme;
   for n in 1..4 loop
     r := depo_giris('yanlis' || n);
     perform pg_temp.bekle('deneme ' || n || ' reddedildi, kilit YOK',
-      (r->>'ok')::boolean is false and (r->>'hata') = 'Sifre hatali');
+      (r->>'hata') = 'Sifre hatali');
   end loop;
-
   r := depo_giris('yanlis5');
   perform pg_temp.bekle('5. deneme de reddedildi', (r->>'ok')::boolean is false);
-
-  -- 5 basarisiz denemeden sonra kilit devrede
   r := depo_giris('yanlis6');
   perform pg_temp.bekle('6. denemede KILIT devrede', (r->>'hata') like 'Cok fazla%');
-
   r := depo_giris('TestDepoSifre2026!');
   perform pg_temp.bekle('kilitliyken DOGRU sifre de reddediliyor', (r->>'ok')::boolean is false);
-
-  delete from kaptan_deneme;   -- kilidi kaldir (canlida 15 dk beklenir)
+  delete from kaptan_deneme;
   r := depo_giris('TestDepoSifre2026!');
   perform pg_temp.bekle('kilit dusunce dogru sifre yine calisiyor', (r->>'ok')::boolean);
-  v_depo_token := r->>'token';
 
-  raise notice '=== 6. Basarili giris sayaci SIFIRLIYOR ===';
   delete from kaptan_deneme;
-  perform depo_giris('yanlis');
-  perform depo_giris('yanlis');
+  perform depo_giris('yanlis'); perform depo_giris('yanlis');
   select count(*) into n from kaptan_deneme where kod = '#depo';
   perform pg_temp.bekle('2 basarisiz deneme kayitli', n = 2);
   perform depo_giris('TestDepoSifre2026!');
   select count(*) into n from kaptan_deneme where kod = '#depo';
   perform pg_temp.bekle('basarili girisle sayac sifirlandi', n = 0);
 
-  raise notice '=== 7. Admin girisi ve kaptan olusturma ===';
-  r := admin_giris('TestAdminSifre2026!');
-  perform pg_temp.bekle('admin girisi', (r->>'ok')::boolean);
-  v_admin_token := r->>'token';
-
-  r := kaptan_ekle(v_admin_token, 'maraz', 'Mehmet Turan Araz', '123456', 'bar');
-  perform pg_temp.bekle('bar kaptani eklendi', r is not null);
-  r := kaptan_ekle(v_admin_token, 'mutfakci', 'Mutfak Sefi', '123456', 'mutfak');
-  perform pg_temp.bekle('mutfak kaptani eklendi', r is not null);
-
-  raise notice '=== 8. Kaptan girisi ===';
-  r := kaptan_giris('MARAZ', '123456');       -- buyuk harf de olmali
-  perform pg_temp.bekle('buyuk/kucuk harf farketmiyor', (r->>'ok')::boolean);
-  perform pg_temp.bekle('departman dondu', r->>'departman' = 'bar');
-  v_kap_token := r->>'token';
-
-  r := kaptan_giris('maraz', 'yanlisPin');
-  perform pg_temp.bekle('yanlis PIN reddedildi', (r->>'ok')::boolean is false);
-  delete from kaptan_deneme;
-
-  raise notice '=== 9. YATAY YETKI (M-3) ===';
-  -- ASIL MESELE: bar kaptani MUTFAK listesini gorememeli.
-  r := katalog_getir('CSM201', v_kap_token);          -- CSM201 = bar
-  perform pg_temp.bekle('bar kaptani BAR listesini gorebiliyor',
-    jsonb_typeof(r) = 'array' or (r->>'ok') is distinct from 'false');
-
-  -- Reddetme ya RAISE ile ya da {ok:false} ile olur; ikisi de kabul.
-  v_red := false;
-  begin
-    r := katalog_getir('CMM201', v_kap_token);        -- CMM201 = ANAMUTFAK
-    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
-  exception when others then v_red := true; end;
-  perform pg_temp.bekle('bar kaptani MUTFAK listesini GOREMIYOR', v_red);
-
-  -- Ters yon: mutfak kaptani bar listesini gorememeli.
-  declare rr jsonb; mt text; v_red2 boolean;
-  begin
-    rr := kaptan_giris('mutfakci', '123456');
-    mt := rr->>'token';
-    rr := katalog_getir('CMM201', mt);
-    perform pg_temp.bekle('mutfak kaptani MUTFAK listesini gorebiliyor',
-      jsonb_typeof(rr) = 'array' or (rr->>'ok') is distinct from 'false');
-    v_red2 := false;
-    begin
-      rr := katalog_getir('CSM201', mt);
-      v_red2 := (jsonb_typeof(rr) = 'object' and (rr->>'ok') = 'false');
-    exception when others then v_red2 := true; end;
-    perform pg_temp.bekle('mutfak kaptani BAR listesini GOREMIYOR', v_red2);
-    perform oturum_iptal(mt);
-  end;
-
-  -- Baska bir kaptanin biriminde SIPARIS acamamali.
-  v_red := false;
-  begin
-    r := siparis_gonder('CMM201', 'ANAMUTFAK',
-                        '[{"k":"YIY01000001","a":"TEST","b":"ad","m":10}]'::jsonb,
-                        null, gen_random_uuid()::text, v_kap_token);
-    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
-  exception when others then v_red := true; end;
-  perform pg_temp.bekle('bar kaptani mutfak adina siparis ACAMIYOR', v_red);
-
-  raise notice '=== 10. PIN degisince TUM oturumlar kapaniyor ===';
-  r := kaptan_giris('maraz', '123456');
-  v_kap_token2 := r->>'token';                -- ayni kaptan, IKINCI oturum
-  perform pg_temp.bekle('ikinci oturum acildi', v_kap_token2 is not null and v_kap_token2 <> v_kap_token);
-
-  r := kaptan_sifre_degistir(v_kap_token, '123456', '654321');
-  perform pg_temp.bekle('PIN degistirildi', (r->>'ok')::boolean);
-
-  select count(*) into n from oturum
-   where tip = 'kaptan' and lower(ref) = 'maraz';
-  perform pg_temp.bekle('kaptanin TUM oturumlari kapandi (ikisi de)', n = 0);
-
-  r := katalog_getir('CSM201', v_kap_token2);
-  perform pg_temp.bekle('eski token artik gecersiz',
-    jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
-
-  r := kaptan_giris('maraz', '654321');
-  perform pg_temp.bekle('yeni PIN ile giris yapiliyor', (r->>'ok')::boolean);
-  r := kaptan_giris('maraz', '123456');
-  perform pg_temp.bekle('eski PIN artik calismiyor', (r->>'ok')::boolean is false);
-  delete from kaptan_deneme;
-
-  raise notice '=== 11. Yanlis eski PIN ile degisim reddediliyor ===';
-  r := kaptan_giris('maraz', '654321');
-  v_kap_token := r->>'token';
-  v_red := false;
-  begin
-    r := kaptan_sifre_degistir(v_kap_token, 'yanlisEski', '999999');
-    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
-  exception when others then v_red := true; end;
-  perform pg_temp.bekle('yanlis eski PIN reddedildi', v_red);
-  -- ve PIN GERCEKTEN degismemis olmali
-  perform pg_temp.bekle('PIN degismedi', (kaptan_giris('maraz','654321')->>'ok')::boolean);
-  delete from kaptan_deneme;
-
-  raise notice '=== 12. Cikis (oturum_iptal) ===';
-  r := kaptan_giris('maraz', '654321');
-  v_kap_token := r->>'token';
-  perform oturum_iptal(v_kap_token);
-  r := katalog_getir('CSM201', v_kap_token);
-  perform pg_temp.bekle('cikistan sonra token gecersiz',
-    jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
-
-  raise notice '=== 13. Kaptan silinince oturumu da kapaniyor ===';
-  r := kaptan_giris('mutfakci', '123456');
-  v_kap_token := r->>'token';
-  select count(*) into n from oturum where tip='kaptan' and lower(ref)='mutfakci';
-  perform pg_temp.bekle('mutfak kaptani oturumu acik', n = 1);
-  perform kaptan_sil(v_admin_token, 'mutfakci');
-  select count(*) into n from oturum where tip='kaptan' and lower(ref)='mutfakci';
-  perform pg_temp.bekle('kaptan silinince oturumu da silindi', n = 0);
-
-  raise notice '=== 14. Suresi dolmus oturum ===';
+  -- ORTAK SIFRE OTURUMU ARTIK HICBIR SEY YAPAMAZ: depo_izin kaptan tablosuna
+  -- join ediyor, ortak sifre oturumunda ref NULL. Kapali fail -- dogru davranis.
   r := depo_giris('TestDepoSifre2026!');
-  v_depo_token := r->>'token';
-  update oturum set son_kullanma = now() - interval '1 minute'
-   where token_hash = encode(extensions.digest(v_depo_token,'sha256'),'hex');
-  v_red := false;
-  begin perform stok_liste(v_depo_token);
-  exception when others then v_red := true; end;
-  perform pg_temp.bekle('suresi dolmus token reddedildi', v_red);
+  perform pg_temp.bekle('ortak sifre oturumu SIFIR yetkili',
+    pg_temp.izinler(r->>'token') = '');
+  delete from oturum; delete from kaptan_deneme;
+  v_admin_token := admin_giris('TestAdminSifre2026!')->>'token';
 
-  raise notice '=== 15. Sifreler HASH olarak saklaniyor ===';
-  perform pg_temp.bekle('depo sifresi duz metin DEGIL',
-    (select deger from ayarlar where anahtar='depo_sifre') <> 'TestDepoSifre2026!');
-  perform pg_temp.bekle('bcrypt formatinda',
-    (select deger from ayarlar where anahtar='depo_sifre') like '$2%');
-  perform pg_temp.bekle('kaptan PIN-i duz metin DEGIL',
-    (select pin from kaptan where kod='maraz') <> '654321');
+raise notice '=== 4. DEPO KADEMELERI: izin matrisi ===';
+  r := kaptan_giris('dp', '111111');
+  v_izin := pg_temp.izinler(r->>'token');
+  perform pg_temp.bekle('PERSONEL: talep + stok_gor  [' || v_izin || ']',
+    v_izin = 'talep stok_gor');
 
-  raise notice '=== 16. DEPO KULLANICISI (kullanici adi + PIN) ===';
+  r := kaptan_giris('da', '222222');
+  v_izin := pg_temp.izinler(r->>'token');
+  perform pg_temp.bekle('ASISTAN: + envanter + stok_yukle  [' || v_izin || ']',
+    v_izin = 'talep stok_gor envanter stok_yukle');
+
+  r := kaptan_giris('dy', '333333');
+  v_izin := pg_temp.izinler(r->>'token');
+  perform pg_temp.bekle('YONETICI: hepsi  [' || v_izin || ']',
+    v_izin = 'talep stok_gor envanter stok_yukle stok_sil');
+
+  r := kaptan_giris('dymut', '444444');
+  v_izin := pg_temp.izinler(r->>'token');
+  -- Departman yoneticisi SALT OKUNUR: talep yok, yukleme yok, silme yok.
+  perform pg_temp.bekle('DEPARTMAN YON.: salt okunur  [' || v_izin || ']',
+    v_izin = 'stok_gor envanter');
   delete from kaptan_deneme;
-  r := admin_giris('TestAdminSifre2026!');
-  v_admin_token := r->>'token';
 
-  perform kaptan_ekle(v_admin_token, 'depocu1', 'Depo Personeli 1', '111111', 'hepsi', 'depo');
-  perform kaptan_ekle(v_admin_token, 'depocu2', 'Depo Personeli 2', '222222', 'hepsi', 'depo');
-  perform pg_temp.bekle('depo kullanicilari eklendi',
-    (select count(*) from kaptan where rol = 'depo') = 2);
+raise notice '=== 5. DEPARTMAN KAPSAMI: kendi birimleri ===';
+  delete from siparisler;
+  insert into siparisler (siparis_no, outlet_kod, outlet_ad, gonderen, kalemler, tarih, durum)
+  values ('T-BAR', 'CSM201', 'ALIBEY RESTAURANT', 'test',
+          '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":1}]'::jsonb, current_date, 'talep'),
+         ('T-MUT', 'CMM201', 'ANAMUTFAK', 'test',
+          '[{"k":"YIY01000001","a":"UN","b":"kg","m":1}]'::jsonb, current_date, 'talep');
 
-  r := kaptan_giris('DEPOCU1', '111111');
-  perform pg_temp.bekle('depo kullanicisi giris yapabiliyor', (r->>'ok')::boolean);
-  perform pg_temp.bekle('rol donuyor', r->>'rol' = 'depo');
-  v_kap_token := r->>'token';
+  r := kaptan_giris('dymut', '444444');
+  r := depo_envanter(r->>'token', current_date, current_date);
+  perform pg_temp.bekle('mutfak sefi YALNIZ mutfak siparisini goruyor',
+    jsonb_array_length(r) = 1 and r->0->>'outlet_kod' = 'CMM201');
 
-  perform pg_temp.bekle('oturum tipi DEPO acildi',
+  r := kaptan_giris('dybar', '555555');
+  r := depo_envanter(r->>'token', current_date, current_date);
+  perform pg_temp.bekle('bar muduru YALNIZ bar siparisini goruyor',
+    jsonb_array_length(r) = 1 and r->0->>'outlet_kod' = 'CSM201');
+
+  r := kaptan_giris('dy', '333333');
+  r := depo_envanter(r->>'token', current_date, current_date);
+  perform pg_temp.bekle('depo yoneticisi IKISINI DE goruyor', jsonb_array_length(r) = 2);
+  delete from siparisler; delete from kaptan_deneme;
+
+raise notice '=== 6. ROLLER birbirine gecmiyor ===';
+  r := kaptan_giris('dy', '333333');
+  v_token := r->>'token';
+  perform pg_temp.bekle('depo oturumu tip=depo',
     exists (select 1 from oturum
-             where token_hash = encode(extensions.digest(v_kap_token,'sha256'),'hex')
-               and tip = 'depo' and lower(ref) = 'depocu1'));
-  perform pg_temp.bekle('oturum KIMIN oldugunu biliyor (hesap verebilirlik)',
-    (select lower(ref) from oturum
-      where token_hash = encode(extensions.digest(v_kap_token,'sha256'),'hex')) = 'depocu1');
-
-  raise notice '--- depo token-i depo RPC-lerinde calisiyor ---';
-  perform pg_temp.bekle('stok_liste calisti', stok_liste(v_kap_token) is not null);
-  perform pg_temp.bekle('depo_liste calisti', depo_liste(v_kap_token, current_date) is not null);
-
-  raise notice '--- roller birbirine gecmiyor ---';
+             where token_hash = encode(extensions.digest(v_token,'sha256'),'hex')
+               and tip = 'depo'));
   v_red := false;
   begin
-    r := katalog_getir('CSM201', v_kap_token);
+    r := katalog_getir('CSM201', v_token);
     v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
   exception when others then v_red := true; end;
-  perform pg_temp.bekle('depo kullanicisi siparis ekranina GIREMIYOR', v_red);
-
-  r := kaptan_giris('maraz', '654321');            -- kaptan rolu
-  v_kap_token2 := r->>'token';
-  perform pg_temp.bekle('kaptan girisinde rol kaptan', r->>'rol' = 'kaptan');
+  perform pg_temp.bekle('depo kullanicisi SIPARIS ekranina giremiyor', v_red);
   v_red := false;
-  begin perform stok_liste(v_kap_token2);
+  begin perform kaptan_liste(v_token);
   exception when others then v_red := true; end;
-  perform pg_temp.bekle('kaptan DEPO ekranina GIREMIYOR', v_red);
+  perform pg_temp.bekle('depo kullanicisi YONETIM ekranina giremiyor', v_red);
 
-  raise notice '=== 17. N-1 COZULDU: kilit artik KISI basina ===';
-  delete from kaptan_deneme;
-  for n in 1..6 loop
-    perform kaptan_giris('depocu1', 'yanlis' || n);
-  end loop;
-  r := kaptan_giris('depocu1', '111111');
-  perform pg_temp.bekle('depocu1 kilitlendi', (r->>'ok')::boolean is false);
-  -- ASIL MESELE: bir kisinin kilitlenmesi DIGERLERINI etkilememeli.
-  r := kaptan_giris('depocu2', '222222');
-  perform pg_temp.bekle('depocu2 ETKILENMEDI, girebiliyor', (r->>'ok')::boolean);
-  r := kaptan_giris('maraz', '654321');
-  perform pg_temp.bekle('kaptan da etkilenmedi', (r->>'ok')::boolean);
-  delete from kaptan_deneme;
-
-  raise notice '=== 18. Depo kullanicisi KENDI PIN-ini degistirebiliyor ===';
-  r := kaptan_giris('depocu1', '111111');
-  v_kap_token := r->>'token';
-  r := kaptan_sifre_degistir(v_kap_token, '111111', '333333');
-  perform pg_temp.bekle('PIN degistirildi', (r->>'ok')::boolean);
-  select count(*) into n from oturum where lower(ref) = 'depocu1';
-  perform pg_temp.bekle('depo oturumlari da kapandi', n = 0);
-  r := kaptan_giris('depocu1', '333333');
-  perform pg_temp.bekle('yeni PIN calisiyor', (r->>'ok')::boolean);
-  delete from kaptan_deneme;
-
-  raise notice '=== 19. Rol degisince oturum kapaniyor ===';
-  delete from oturum where lower(ref) = 'depocu2';   -- onceki testlerden kalanlar
-  r := kaptan_giris('depocu2', '222222');
-  v_kap_token := r->>'token';
-  select count(*) into n from oturum where lower(ref) = 'depocu2';
-  perform pg_temp.bekle('oturum acik', n = 1);
-  perform kaptan_rol(v_admin_token, 'depocu2', 'kaptan');
-  select count(*) into n from oturum where lower(ref) = 'depocu2';
-  perform pg_temp.bekle('rol degisince oturum kapandi', n = 0);
-  r := kaptan_giris('depocu2', '222222');
-  perform pg_temp.bekle('artik kaptan rolunde', r->>'rol' = 'kaptan');
-  delete from kaptan_deneme;
-
-  raise notice '=== 20. Ortak depo sifresi KAPATILABILIYOR (gecisin son adimi) ===';
-  r := depo_giris('TestDepoSifre2026!');
-  perform pg_temp.bekle('kapatmadan once calisiyor', (r->>'ok')::boolean);
-  delete from ayarlar where anahtar = 'depo_sifre';
-  r := depo_giris('TestDepoSifre2026!');
-  perform pg_temp.bekle('kapatildiktan sonra reddediliyor', (r->>'ok')::boolean is false);
-  perform pg_temp.bekle('mesaj kullaniciyi yonlendiriyor',
-    r->>'hata' like '%Kullanici adi ve PIN%');
-  -- depo kullanicisi hala girebiliyor olmali
-  r := kaptan_giris('depocu1', '333333');
-  perform pg_temp.bekle('depo kullanicisi ETKILENMEDI', (r->>'ok')::boolean);
-  delete from kaptan_deneme;
-
-  raise notice '=== 21. YONETICI KULLANICISI (kullanici adi + parola) ===';
-  delete from kaptan_deneme;
-  r := admin_giris('TestAdminSifre2026!');
-  v_admin_token := r->>'token';
-
-  -- Parola kurali role gore: yonetici icin sayisal PIN KABUL EDILMEMELI.
+  r := kaptan_giris('maraz', '123456');
+  v_token := r->>'token';
+  perform pg_temp.bekle('kaptan rolu dondu', r->>'rol' = 'kaptan');
   v_red := false;
-  begin
-    perform kaptan_ekle(v_admin_token, 'yonetici1', 'Yonetici Bir', '123456', 'hepsi', 'admin');
+  begin perform stok_liste(v_token);
   exception when others then v_red := true; end;
-  perform pg_temp.bekle('yoneticiye 6 haneli PIN verilemiyor', v_red);
+  perform pg_temp.bekle('kaptan DEPO ekranina giremiyor', v_red);
 
-  v_red := false;
-  begin
-    perform kaptan_ekle(v_admin_token, 'yonetici1', 'Yonetici Bir', 'kisa', 'hepsi', 'admin');
-  exception when others then v_red := true; end;
-  perform pg_temp.bekle('kisa parola reddediliyor', v_red);
-
-  perform kaptan_ekle(v_admin_token, 'yonetici1', 'Yonetici Bir', 'UzunParola2026!', 'hepsi', 'admin');
-  perform kaptan_ekle(v_admin_token, 'yonetici2', 'Yonetici Iki', 'BaskaParola2026!', 'hepsi', 'admin');
-  perform pg_temp.bekle('yoneticiler eklendi',
-    (select count(*) from kaptan where rol = 'admin') = 2);
-  perform pg_temp.bekle('yoneticide departman anlamsiz, hepsi yapildi',
-    (select departman from kaptan where kod = 'yonetici1') = 'hepsi');
-
-  -- Kaptan/depo hala SAYISAL PIN kullaniyor
-  v_red := false;
-  begin
-    perform kaptan_ekle(v_admin_token, 'kaptanx', 'Kaptan X', 'harfliparola', 'bar', 'kaptan');
-  exception when others then v_red := true; end;
-  perform pg_temp.bekle('kaptana harfli parola verilemiyor (PIN kurali korundu)', v_red);
-
-  raise notice '--- yonetici girisi ve oturum tipi ---';
-  r := kaptan_giris('YONETICI1', 'UzunParola2026!');
-  perform pg_temp.bekle('yonetici giris yapabiliyor', (r->>'ok')::boolean);
-  perform pg_temp.bekle('rol admin', r->>'rol' = 'admin');
-  v_kap_token := r->>'token';
-  perform pg_temp.bekle('oturum tipi ADMIN acildi',
+  r := kaptan_giris('yon1', 'UzunParola2026!');
+  v_token := r->>'token';
+  perform pg_temp.bekle('yonetici rolu dondu', r->>'rol' = 'admin');
+  perform pg_temp.bekle('yonetici oturumu tip=admin',
     exists (select 1 from oturum
-             where token_hash = encode(extensions.digest(v_kap_token,'sha256'),'hex')
-               and tip = 'admin' and lower(ref) = 'yonetici1'));
-  perform pg_temp.bekle('oturum KIMIN oldugunu biliyor',
-    (select lower(ref) from oturum
-      where token_hash = encode(extensions.digest(v_kap_token,'sha256'),'hex')) = 'yonetici1');
-
-  raise notice '--- yonetici token-i admin RPC-lerinde calisiyor ---';
-  perform pg_temp.bekle('kaptan_liste calisti', kaptan_liste(v_kap_token) is not null);
-  perform pg_temp.bekle('outlet_liste calisti', outlet_liste(v_kap_token) is not null);
-
-  raise notice '--- roller birbirine gecmiyor ---';
-  v_red := false;
-  begin perform stok_liste(v_kap_token);          -- depo RPC-si
-  exception when others then v_red := true; end;
-  perform pg_temp.bekle('yonetici DEPO ekranina GIREMIYOR', v_red);
-
-  -- katalog_getir admin token-ini BILEREK kabul eder: yonetim paneli listeleri
-  -- onunla duzenliyor. Yoneticiyi ayiran sey katalogu okumak degil, KAPTANA
-  -- OZEL eylemler -- siparis acmak ve birimin bekleyen siparislerini gormek.
-  r := katalog_getir('CSM201', v_kap_token);
+             where token_hash = encode(extensions.digest(v_token,'sha256'),'hex')
+               and tip = 'admin'));
+  perform pg_temp.bekle('yonetici YONETIM RPC-lerini kullanabiliyor',
+    kaptan_liste(v_token) is not null);
+  -- katalog_getir admin token-ini BILEREK kabul eder (panel listeleri duzenliyor).
   perform pg_temp.bekle('yonetici katalogu gorebiliyor (panel icin gerekli)',
-    jsonb_typeof(r) = 'array' or (r->>'ok') is distinct from 'false');
-
+    jsonb_typeof(katalog_getir('CSM201', v_token)) = 'array');
+  v_red := false;
+  begin perform stok_liste(v_token);
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('yonetici DEPO ekranina giremiyor', v_red);
   v_red := false;
   begin
     r := siparis_gonder('CSM201', 'ALIBEY RESTAURANT',
                         '[{"k":"ICA02000001","a":"TEST","b":"kol","m":10}]'::jsonb,
-                        null, gen_random_uuid()::text, v_kap_token);
+                        null, gen_random_uuid()::text, v_token);
     v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
   exception when others then v_red := true; end;
   perform pg_temp.bekle('yonetici SIPARIS ACAMIYOR', v_red);
+  delete from kaptan_deneme;
 
+raise notice '=== 7. YATAY YETKI (M-3) ===';
+  r := kaptan_giris('maraz', '123456');
+  v_token := r->>'token';
+  perform pg_temp.bekle('bar kaptani BAR listesini gorebiliyor',
+    jsonb_typeof(katalog_getir('CSM201', v_token)) = 'array');
   v_red := false;
   begin
-    r := bekleyen_siparisler('CSM201', null, v_kap_token);
+    r := katalog_getir('CMM201', v_token);
     v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
   exception when others then v_red := true; end;
-  perform pg_temp.bekle('yonetici birim makbuzlarini goremiyor', v_red);
+  perform pg_temp.bekle('bar kaptani MUTFAK listesini GOREMIYOR', v_red);
 
-  v_red := false;
-  begin perform kaptan_liste(v_depo_token);       -- eski ortak-sifre admin token-i degil
-  exception when others then v_red := true; end;
-  perform pg_temp.bekle('depo token-i ADMIN RPC-sinde calismiyor', v_red);
-
-  raise notice '=== 22. Yonetici kilidi de KISI basina ===';
-  delete from kaptan_deneme;
-  for n in 1..6 loop
-    perform kaptan_giris('yonetici1', 'yanlisParola' || n);
-  end loop;
-  r := kaptan_giris('yonetici1', 'UzunParola2026!');
-  perform pg_temp.bekle('yonetici1 kilitlendi', (r->>'ok')::boolean is false);
-  r := kaptan_giris('yonetici2', 'BaskaParola2026!');
-  perform pg_temp.bekle('yonetici2 ETKILENMEDI', (r->>'ok')::boolean);
-  delete from kaptan_deneme;
-
-  raise notice '=== 23. Yonetici KENDI parolasini degistirebiliyor ===';
-  r := kaptan_giris('yonetici1', 'UzunParola2026!');
-  v_kap_token := r->>'token';
-  -- Sayisal PIN-e dusurmeye calismak reddedilmeli
+  r := kaptan_giris('mutfakci', '123456');
+  v_token2 := r->>'token';
+  perform pg_temp.bekle('mutfak kaptani MUTFAK listesini gorebiliyor',
+    jsonb_typeof(katalog_getir('CMM201', v_token2)) = 'array');
   v_red := false;
   begin
-    r := kaptan_sifre_degistir(v_kap_token, 'UzunParola2026!', '123456');
+    r := katalog_getir('CSM201', v_token2);
+    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('mutfak kaptani BAR listesini GOREMIYOR', v_red);
+
+  v_red := false;
+  begin
+    r := siparis_gonder('CMM201', 'ANAMUTFAK',
+                        '[{"k":"YIY01000001","a":"TEST","b":"ad","m":10}]'::jsonb,
+                        null, gen_random_uuid()::text, v_token);
+    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('bar kaptani mutfak adina siparis ACAMIYOR', v_red);
+  delete from kaptan_deneme;
+
+raise notice '=== 8. PAROLA KURALI role gore ===';
+  -- Once yonetici oturumunun GECERLI oldugunu dogrula: asagidaki testler
+  -- 'reddedildi mi' diye baktigi icin gecersiz oturum da onlari gecirirdi.
+  perform pg_temp.bekle('yonetici oturumu gecerli', kaptan_liste(v_admin_token) is not null);
+
+  v_hata := '';
+  begin perform kaptan_ekle(v_admin_token, 'yeni1', 'Test', '123456', 'hepsi', 'admin');
+  exception when others then v_hata := sqlerrm; end;
+  perform pg_temp.bekle('yoneticiye 6 haneli PIN verilemiyor  [' || v_hata || ']',
+    v_hata like '%parola%');
+
+  v_hata := '';
+  begin perform kaptan_ekle(v_admin_token, 'yeni2', 'Test', 'kisa', 'hepsi', 'admin');
+  exception when others then v_hata := sqlerrm; end;
+  perform pg_temp.bekle('kisa parola reddediliyor  [' || v_hata || ']',
+    v_hata like '%parola%');
+
+  v_hata := '';
+  begin perform kaptan_ekle(v_admin_token, 'yeni3', 'Test', 'harfliparola', 'bar', 'kaptan');
+  exception when others then v_hata := sqlerrm; end;
+  perform pg_temp.bekle('kaptana harfli parola verilemiyor  [' || v_hata || ']',
+    v_hata like '%PIN%');
+
+  perform pg_temp.bekle('reddedilen kullanicilar OLUSMADI',
+    (select count(*) from kaptan where kod in ('yeni1','yeni2','yeni3')) = 0);
+
+  perform pg_temp.bekle('departman yoneticisinde departman KORUNUYOR',
+    (select departman from kaptan where kod = 'dymut') = 'mutfak');
+  perform pg_temp.bekle('depo kademelerinde departman hepsi',
+    (select departman from kaptan where kod = 'dp') = 'hepsi');
+
+raise notice '=== 9. Parola/PIN degisimi TUM oturumlari kapatiyor ===';
+  delete from oturum;
+  v_admin_token := admin_giris('TestAdminSifre2026!')->>'token';
+  r := kaptan_giris('dy', '333333'); v_token  := r->>'token';
+  r := kaptan_giris('dy', '333333'); v_token2 := r->>'token';   -- ayni kisi, ikinci oturum
+  perform pg_temp.bekle('iki oturum acildi', v_token <> v_token2);
+  r := kaptan_sifre_degistir(v_token, '333333', '999999');
+  perform pg_temp.bekle('PIN degistirildi', (r->>'ok')::boolean);
+  select count(*) into n from oturum where lower(ref) = 'dy';
+  perform pg_temp.bekle('IKI oturum da kapandi', n = 0);
+  v_red := false;
+  begin perform stok_liste(v_token2);
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('eski token gecersiz', v_red);
+  perform pg_temp.bekle('yeni PIN calisiyor', (kaptan_giris('dy','999999')->>'ok')::boolean);
+  perform pg_temp.bekle('eski PIN calismiyor', (kaptan_giris('dy','333333')->>'ok')::boolean is false);
+  delete from kaptan_deneme;
+
+  r := kaptan_giris('yon1', 'UzunParola2026!'); v_token := r->>'token';
+  v_red := false;
+  begin
+    r := kaptan_sifre_degistir(v_token, 'UzunParola2026!', '123456');
     v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
   exception when others then v_red := true; end;
   perform pg_temp.bekle('yonetici parolasini 6 haneli PIN yapamiyor', v_red);
-
-  r := kaptan_sifre_degistir(v_kap_token, 'UzunParola2026!', 'YeniUzunParola2026!');
-  perform pg_temp.bekle('parola degistirildi', (r->>'ok')::boolean);
-  select count(*) into n from oturum where lower(ref) = 'yonetici1';
-  perform pg_temp.bekle('yonetici oturumlari kapandi', n = 0);
-  r := kaptan_giris('yonetici1', 'YeniUzunParola2026!');
-  perform pg_temp.bekle('yeni parola calisiyor', (r->>'ok')::boolean);
+  r := kaptan_sifre_degistir(v_token, 'UzunParola2026!', 'YeniUzunParola2026!');
+  perform pg_temp.bekle('yonetici parolasini degistirdi', (r->>'ok')::boolean);
   delete from kaptan_deneme;
 
-  raise notice '=== 24. Ortak YONETICI sifresi kapatilabiliyor ===';
-  r := admin_giris('TestAdminSifre2026!');
-  perform pg_temp.bekle('kapatmadan once calisiyor', (r->>'ok')::boolean);
+  r := kaptan_giris('dy', '999999'); v_token := r->>'token';
+  v_red := false;
+  begin
+    r := kaptan_sifre_degistir(v_token, 'yanlisEski', '888888');
+    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('yanlis eski PIN reddedildi', v_red);
+  perform pg_temp.bekle('PIN degismedi', (kaptan_giris('dy','999999')->>'ok')::boolean);
+  delete from kaptan_deneme;
+
+raise notice '=== 10. KILIT kisi basina (N-1 cozuldu) ===';
+  delete from kaptan_deneme;
+  for n in 1..6 loop perform kaptan_giris('dp', 'yanlis' || n); end loop;
+  perform pg_temp.bekle('dp kilitlendi', (kaptan_giris('dp','111111')->>'ok')::boolean is false);
+  -- ASIL MESELE: birinin kilitlenmesi digerlerini etkilememeli.
+  perform pg_temp.bekle('da ETKILENMEDI',     (kaptan_giris('da','222222')->>'ok')::boolean);
+  perform pg_temp.bekle('dy ETKILENMEDI',     (kaptan_giris('dy','999999')->>'ok')::boolean);
+  perform pg_temp.bekle('kaptan ETKILENMEDI', (kaptan_giris('maraz','123456')->>'ok')::boolean);
+  delete from kaptan_deneme;
+
+raise notice '=== 11. Rol degisimi, silme, cikis ===';
+  r := kaptan_giris('da', '222222'); v_token := r->>'token';
+  perform kaptan_rol(v_admin_token, 'da', 'depo_personel');
+  select count(*) into n from oturum where lower(ref) = 'da';
+  perform pg_temp.bekle('rol degisince oturum kapandi', n = 0);
+  r := kaptan_giris('da', '222222');
+  perform pg_temp.bekle('yeni rol personel', r->>'rol' = 'depo_personel');
+  perform pg_temp.bekle('yetkileri de daraldi',
+    pg_temp.izinler(r->>'token') = 'talep stok_gor');
+
+  r := kaptan_giris('dybar', '555555'); v_token := r->>'token';
+  perform oturum_iptal(v_token);
+  v_red := false;
+  begin perform stok_liste(v_token);
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('cikistan sonra token gecersiz', v_red);
+
+  r := kaptan_giris('dymut', '444444');
+  select count(*) into n from oturum where lower(ref) = 'dymut';
+  perform pg_temp.bekle('oturum acik', n = 1);
+  perform kaptan_sil(v_admin_token, 'dymut');
+  select count(*) into n from oturum where lower(ref) = 'dymut';
+  perform pg_temp.bekle('kullanici silinince oturumu da silindi', n = 0);
+  delete from kaptan_deneme;
+
+raise notice '=== 12. Sifreler HASH olarak saklaniyor ===';
+  perform pg_temp.bekle('depo ortak sifresi duz metin DEGIL',
+    (select deger from ayarlar where anahtar='depo_sifre') <> 'TestDepoSifre2026!');
+  perform pg_temp.bekle('bcrypt formatinda',
+    (select deger from ayarlar where anahtar='depo_sifre') like '$2%');
+  perform pg_temp.bekle('kullanici PIN-i duz metin DEGIL',
+    (select pin from kaptan where kod='dp') <> '111111');
+  perform pg_temp.bekle('yonetici parolasi duz metin DEGIL',
+    (select pin from kaptan where kod='yon1') <> 'YeniUzunParola2026!');
+
+raise notice '=== 13. Ortak sifreler KAPATILABILIYOR ===';
+  delete from kaptan_deneme;
+  perform pg_temp.bekle('depo ortak sifresi acik',
+    (depo_giris('TestDepoSifre2026!')->>'ok')::boolean);
+  delete from ayarlar where anahtar = 'depo_sifre';
+  r := depo_giris('TestDepoSifre2026!');
+  perform pg_temp.bekle('kapatildiktan sonra reddediliyor', (r->>'ok')::boolean is false);
+  perform pg_temp.bekle('mesaj yonlendiriyor', r->>'hata' like '%Kullanici adi ve PIN%');
+  -- Sayaca DOKUNMADAN donmeli: 6 cagri sonrasi hala kilit mesaji YOK
+  for n in 1..6 loop perform depo_giris('yanlis' || n); end loop;
+  perform pg_temp.bekle('kapali kapi sayaci BESLEMIYOR',
+    (depo_giris('x')->>'hata') like 'Ortak depo%');
+
   delete from ayarlar where anahtar = 'admin_sifre';
   r := admin_giris('TestAdminSifre2026!');
-  perform pg_temp.bekle('kapatildiktan sonra reddediliyor', (r->>'ok')::boolean is false);
-  perform pg_temp.bekle('mesaj yonlendiriyor', r->>'hata' like '%Kullanici adi ve parola%');
-  -- sayaca DOKUNMADAN donmeli: 6 cagri sonrasi hala kilit mesaji YOK
+  perform pg_temp.bekle('yonetici ortak sifresi de kapandi', r->>'hata' like 'Ortak yonetici%');
   for n in 1..6 loop perform admin_giris('yanlis' || n); end loop;
-  r := admin_giris('yanlis7');
-  perform pg_temp.bekle('kapali kapi sayaci BESLEMIYOR', r->>'hata' like 'Ortak yonetici%');
-  r := kaptan_giris('yonetici1', 'YeniUzunParola2026!');
-  perform pg_temp.bekle('yonetici kullanicisi ETKILENMEDI', (r->>'ok')::boolean);
+  perform pg_temp.bekle('kapali yonetici kapisi da sayaci BESLEMIYOR',
+    (admin_giris('x')->>'hata') like 'Ortak yonetici%');
+
+  delete from kaptan_deneme;
+  perform pg_temp.bekle('depo kullanicisi ETKILENMEDI',
+    (kaptan_giris('dp','111111')->>'ok')::boolean);
+  perform pg_temp.bekle('yonetici ETKILENMEDI',
+    (kaptan_giris('yon2','BaskaParola2026!')->>'ok')::boolean);
   delete from kaptan_deneme;
 
   raise notice '';

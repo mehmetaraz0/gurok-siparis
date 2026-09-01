@@ -56,13 +56,18 @@
   <div id="kaptanPanel" style="display:none;padding:12px">
     <button class="geri" onclick="kaptanPaneliKapat()">← Liste düzenlemeye dön</button>
     <div class="depo-header"><span>KULLANICI YÖNETİMİ</span><span class="depo-count" id="kaptanCount">—</span></div>
-    <p style="font-size:12px;color:#777;margin:8px 0"><b>Kaptan:</b> bara bağlı değildir; kendi PIN'iyle girip sipariş vereceği birimi seçer. Depoda o siparişte <b>gönderen</b> olarak adı görünür.<br><b>Depo:</b> depo toplama ekranına girer. Herkesin bildiği ortak şifre yerine kişisel hesap kullanılması, birinin yanlış denemelerle tüm depoyu kilitlemesini de önler.</p>
+    <p style="font-size:12px;color:#777;margin:8px 0"><b>Kaptan:</b> bara bağlı değildir; kendi PIN'iyle girip sipariş vereceği birimi seçer. Depoda o siparişte <b>gönderen</b> olarak adı görünür.<br>
+    <b>Depo · personel:</b> talepleri görür, miktar girer, onaylar; stok listesini görür.<br>
+    <b>Depo · asistan:</b> ek olarak Kalem Envanteri / Tüketim ve stok yükleme (baseline, mal kabul).<br>
+    <b>Depo · yönetici:</b> ek olarak yükleme geri alma ve stok silme.<br>
+    <b>Departman yöneticisi:</b> FM müdürü, mutfak şefi — <b>salt okunur</b>, yalnız kendi departmanının envanter/tüketim verisi. Sipariş onaylayamaz, stok değiştiremez.<br>
+    <b>Yönetici (panel):</b> bu ekran. Parolası en az 10 karakter olmalı.</p>
     <div class="ekle-kutu">
       <b>Kullanıcı ekle</b>
       <input id="kAd" placeholder="Ad Soyad" oninput="kaptanKodGuncelle()">
       <input id="kKod" placeholder="kullanıcı adı (otomatik)" maxlength="10" oninput="this.dataset.elle='1'" autocapitalize="off">
       <input id="kPin" placeholder="PIN (en az 6 hane)" maxlength="12" inputmode="numeric">
-      <select id="kRol" title="Rol" onchange="kaptanRolFormGuncelle()"><option value="kaptan">Kaptan (sipariş)</option><option value="depo">Depo</option><option value="admin">Yönetici</option></select>
+      <select id="kRol" title="Rol" onchange="kaptanRolFormGuncelle()"><option value="kaptan">Kaptan (sipariş)</option><option value="depo_personel">Depo — personel</option><option value="depo_asistan">Depo — asistan</option><option value="depo_yonetici">Depo — yönetici</option><option value="departman_yonetici">Departman yöneticisi</option><option value="admin">Yönetici (panel)</option></select>
       <select id="kDep" title="Departman"><option value="bar">Bar</option><option value="mutfak">Mutfak</option><option value="hepsi">Hepsi</option></select>
       <button class="gb" onclick="kaptanEkle()">+ Ekle</button>
     </div>
@@ -501,7 +506,8 @@ async function kaptanListele() {
     KAPTAN_ROL = new Map(list.map(k => [k.kod, k.rol || "kaptan"]));
     document.getElementById("kaptanCount").textContent =
       list.filter(k => (k.rol || "kaptan") === "kaptan").length + " kaptan · " +
-      list.filter(k => k.rol === "depo").length + " depo · " +
+      list.filter(k => String(k.rol || "").indexOf("depo_") === 0).length + " depo · " +
+      list.filter(k => k.rol === "departman_yonetici").length + " dep.yön. · " +
       list.filter(k => k.rol === "admin").length + " yönetici";
     const depSel = (kod, d) => {
       const o = (v, t) => '<option value="' + v + '"' + (d === v ? ' selected' : '') + '>' + t + '</option>';
@@ -511,13 +517,17 @@ async function kaptanListele() {
     const rolSel = (kod, r) => {
       const o = (v, t) => '<option value="' + v + '"' + (r === v ? ' selected' : '') + '>' + t + '</option>';
       return '<select data-act="krol" data-kod="' + htmlEsc(kod) + '">' +
-        o("kaptan","Kaptan") + o("depo","Depo") + o("admin","Yönetici") + '</select>';
+        o("kaptan","Kaptan") + o("depo_personel","Depo · personel") +
+        o("depo_asistan","Depo · asistan") + o("depo_yonetici","Depo · yönetici") +
+        o("departman_yonetici","Departman yön.") + o("admin","Yönetici") + '</select>';
     };
     kutu.innerHTML = list.length
       ? '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th>ROL</th><th>DEPARTMAN</th><th></th></tr></thead><tbody>' +
         list.map(k => '<tr><td><b>' + htmlEsc(k.kod) + '</b></td><td>' + htmlEsc(k.ad) + '</td>' +
           '<td>' + rolSel(k.kod, k.rol || "kaptan") + '</td>' +
-          '<td>' + (k.rol === "kaptan" ? depSel(k.kod, k.departman || "hepsi") : '<span class="em">—</span>') + '</td>' +
+          '<td>' + ((k.rol === "kaptan" || k.rol === "departman_yonetici")
+                    ? depSel(k.kod, k.departman || "hepsi")
+                    : '<span class="em">—</span>') + '</td>' +
           '<td style="white-space:nowrap">' +
           '<button class="cb" style="width:auto;margin:0 6px 0 0;padding:6px 12px" data-act="ksifre" data-kod="' +
           htmlEsc(k.kod) + '">🔑 Şifre</button>' +
@@ -526,11 +536,14 @@ async function kaptanListele() {
       : '<div class="em">Henüz kullanıcı yok. Yukarıdan ekleyin.</div>';
   } catch (e) { kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata") + '</div>'; }
 }
-// Depo ve yönetici birim seçmiyor; departman kutusu onlar için anlamsız.
+// Departman YALNIZCA kaptan ve departman yöneticisi için anlamlı: kaptan
+// hangi birimlere sipariş açacağını, departman yöneticisi hangi birimlerin
+// verisini göreceğini oradan alıyor. Depo kademeleri ve yönetici tüm tesise bakar.
 // Yöneticide parola kuralı da farklı: sayısal PIN değil, en az 10 karakter.
 function kaptanRolFormGuncelle() {
   const rol = document.getElementById("kRol").value;
-  document.getElementById("kDep").style.display = (rol === "kaptan") ? "" : "none";
+  const depVar = (rol === "kaptan" || rol === "departman_yonetici");
+  document.getElementById("kDep").style.display = depVar ? "" : "none";
   const p = document.getElementById("kPin");
   if (rol === "admin") { p.placeholder = "Parola (en az 10 karakter)"; p.maxLength = 60; p.inputMode = "text"; }
   else { p.placeholder = "PIN (en az 6 hane)"; p.maxLength = 12; p.inputMode = "numeric"; }

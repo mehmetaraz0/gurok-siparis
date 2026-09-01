@@ -98,7 +98,7 @@
 
     <div id="stok" style="display:none">
       <div class="stok-arac">
-        <div class="stok-yukle">
+        <div class="stok-yukle" id="stokYukleKutu">
           <b>KUM raporu yükle</b>
           <div class="stok-mod">
             <label><input type="radio" name="stokMod" value="baseline" checked onchange="stokModDegisti()">
@@ -116,16 +116,20 @@
         </div>
         <div class="stok-sag">
           <input class="sb stok-ara" id="stokAra" placeholder="Ürün ara..." oninput="stokFiltre(this.value)">
-          <button class="cb" style="width:auto;margin:8px 0 0;padding:8px 12px" onclick="stokKatalogDisiTemizle()">🧹 Katalog dışını temizle</button>
-          <button class="cb" style="width:auto;margin:6px 0 0;padding:8px 12px;color:#c00000;border-color:#f0b0b0" onclick="stokTumTemizle()">🗑 Tüm stoğu temizle</button>
+          <div id="stokSilKutu">
+            <button class="cb" style="width:auto;margin:8px 0 0;padding:8px 12px" onclick="stokKatalogDisiTemizle()">🧹 Katalog dışını temizle</button>
+            <button class="cb" style="width:auto;margin:6px 0 0;padding:8px 12px;color:#c00000;border-color:#f0b0b0" onclick="stokTumTemizle()">🗑 Tüm stoğu temizle</button>
+          </div>
         </div>
       </div>
 
-      <div class="depo-header">
-        <span>YÜKLEME GEÇMİŞİ — aynı içerik ikinci kez uygulanamaz</span>
-        <span class="depo-count" id="yuklemeCount">—</span>
+      <div id="yuklemeGecmisi">
+        <div class="depo-header">
+          <span>YÜKLEME GEÇMİŞİ — aynı içerik ikinci kez uygulanamaz</span>
+          <span class="depo-count" id="yuklemeCount">—</span>
+        </div>
+        <div id="yuklemeIcerik"><div class="em">Yükleniyor...</div></div>
       </div>
-      <div id="yuklemeIcerik"><div class="em">Yükleniyor...</div></div>
 
       <div class="depo-header" style="margin-top:14px">
         <span>GÜNCEL STOK</span>
@@ -184,7 +188,11 @@ function pdfjsBekle() {
 /* ================= Durum ================= */
 
 let GIRISLI = false;            // giriş yapıldı mı (oturum token'ı ortak.js'te TOKEN)
-let DEPOCU = null;              // kişisel girişte { kod, ad }; ortak şifrede null
+let DEPOCU = null;              // { kod, ad, rol }
+
+// Bu oturumun izni var mı? Sunucu her hâlükârda kendi kontrolünü yapıyor;
+// burası yalnızca çalışmayacak düğmeleri göstermemek için.
+function izinli(x) { return !!DEPOCU && depoIzinVar(DEPOCU.rol, x); }
 let SIPARISLER = [];            // seçili günün siparişleri (talepler ekranı)
 let ACIK_NO = null;             // detayı açık siparişin numarası (null ise liste ekranı)
 let STOK = null;                // stok listesi (null = henüz çekilmedi)
@@ -202,8 +210,10 @@ let zamanlayici = null;
 sessionStorage.removeItem("gurok_depo_sifre");   // eski sürümden kalmışsa temizle
 if (tokenGeriYukle("gurok_depo")) {
   GIRISLI = true;
-  const ad = sessionStorage.getItem("gurok_depo_ad");
-  if (ad) DEPOCU = { kod: null, ad: ad };   // yenilemeden sonra da kim olduğu görünsün
+  const ad  = sessionStorage.getItem("gurok_depo_ad");
+  const rol = sessionStorage.getItem("gurok_depo_rol");
+  // Yenilemeden sonra da kim olduğu ve neyi görebildiği bilinsin.
+  if (ad) DEPOCU = { kod: null, ad: ad, rol: rol || "depo_personel" };
   basla();
 }
 
@@ -230,11 +240,13 @@ async function giris() {
   btn.textContent = "Kontrol ediliyor...";
   err.textContent = "";
   try {
-    const g = await kisiGirisi(kod, pin, "depo");
+    const g = await kisiGirisi(kod, pin,
+      ["depo_personel", "depo_asistan", "depo_yonetici", "departman_yonetici"]);
     if (g.ok) {
       GIRISLI = true;
-      DEPOCU = { kod: g.kod, ad: g.ad };
+      DEPOCU = { kod: g.kod, ad: g.ad, rol: g.rol };
       sessionStorage.setItem("gurok_depo_ad", g.ad);
+      sessionStorage.setItem("gurok_depo_rol", g.rol);
       oturumDamgala("gurok_depo");
       tokenKaydet("gurok_depo");
       kodInp.value = ""; pinInp.value = "";
@@ -265,7 +277,7 @@ async function cikisYap() {
   GIRISLI = false;
   DEPOCU = null;
   ACIK_NO = null; ACIK_URUN = null; SIPARISLER = []; STOK = null;
-  ["gurok_depo_token", "gurok_depo_zaman", "gurok_depo_sifre", "gurok_depo_ad"]
+  ["gurok_depo_token", "gurok_depo_zaman", "gurok_depo_sifre", "gurok_depo_ad", "gurok_depo_rol"]
     .forEach(k => { try { sessionStorage.removeItem(k); } catch (e) {} });
   document.getElementById("ana").style.display = "none";
   document.getElementById("kilit").style.display = "";
@@ -276,7 +288,9 @@ async function cikisYap() {
 function basla() {
   document.getElementById("kilit").style.display = "none";
   document.getElementById("ana").style.display = "";
-  document.getElementById("depoKim").textContent = DEPOCU ? ("👤 " + DEPOCU.ad) : "";
+  document.getElementById("depoKim").textContent =
+    DEPOCU ? ("👤 " + DEPOCU.ad + " · " + (ROL_ADI[DEPOCU.rol] || DEPOCU.rol)) : "";
+  yetkileriUygula();
   document.getElementById("tarih").value = bugun();
   document.getElementById("envBas").value = bugun();
   document.getElementById("envBit").value = bugun();
@@ -298,6 +312,7 @@ function otoYenile() {
 /* ================= Veri ================= */
 
 async function yenile() {
+  if (!izinli("talep")) return;      // departman yöneticisi talepleri görmüyor
   const tarih = document.getElementById("tarih").value || bugun();
   try {
     const { data, error } = await SB.rpc("depo_liste", { ...yetkiArg(), p_tarih: tarih });
@@ -341,6 +356,22 @@ function ciz() {
 
 /* ================= Ekran 1: liste ================= */
 
+/* Rolün göremeyeceği sekmeleri ve düğmeleri gizler, sonra açık kalan ilk
+   sekmeye geçer. Departman yöneticisi Talepler'i hiç görmediği için
+   varsayılan sekme onda Kalem Envanteri oluyor. */
+function yetkileriUygula() {
+  const g = (id, k) => { const e = document.getElementById(id); if (e) e.style.display = k ? "" : "none"; };
+  g("skTalep", izinli("talep"));
+  g("skEnv",   izinli("envanter"));
+  g("skTuk",   izinli("envanter"));   // Tüketim ile Envanter AYNI veri, aynı izin
+  g("skStok",  izinli("stok_gor"));
+  // Stok sekmesi içi: yükleme ve silme ayrı izinler
+  g("stokYukleKutu", izinli("stok_yukle"));
+  g("yuklemeGecmisi", izinli("stok_yukle"));
+  g("stokSilKutu",   izinli("stok_sil"));
+  sekmeGec(izinli("talep") ? "talep" : (izinli("envanter") ? "env" : "stok"));
+}
+
 function sekmeGec(hangi) {
   document.getElementById("talepler").style.display  = hangi === "talep" ? "" : "none";
   document.getElementById("envanter").style.display  = hangi === "env"   ? "" : "none";
@@ -351,9 +382,14 @@ function sekmeGec(hangi) {
   document.getElementById("skTuk").classList.toggle("aktif",   hangi === "tuk");
   document.getElementById("skStok").classList.toggle("aktif",  hangi === "stok");
 
-  if (hangi === "env"  && !ENVANTER) envanterGetir();
-  if (hangi === "tuk"  && !TUKETIM)  tuketimGetir();
-  if (hangi === "stok" && !STOK)   { stokGetir(); yuklemeGetir(); }
+  // İzin yoksa sorgu ATILMAZ: sunucu zaten reddeder ama boşuna hata
+  // göstermenin ve gereksiz istek atmanın anlamı yok.
+  if (hangi === "env"  && !ENVANTER && izinli("envanter")) envanterGetir();
+  if (hangi === "tuk"  && !TUKETIM  && izinli("envanter")) tuketimGetir();
+  if (hangi === "stok" && !STOK     && izinli("stok_gor")) {
+    stokGetir();
+    if (izinli("stok_yukle")) yuklemeGetir();
+  }
 }
 
 // Hangi barın gönderdiği zaten talep listesinde görünüyor; burada sadece
