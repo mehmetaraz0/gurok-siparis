@@ -423,6 +423,151 @@ raise notice '=== 13. Ortak sifreler KAPATILABILIYOR ===';
     (kaptan_giris('yon2','BaskaParola2026!')->>'ok')::boolean);
   delete from kaptan_deneme;
 
+raise notice '=== 14. GUNLUK LN MUTABAKATI ===';
+  delete from kaptan_deneme; delete from siparisler; delete from stok;
+  delete from stok_yukleme; delete from ayarlar where anahtar = 'son_kesim';
+  -- Mutabakat 'stok_yukle' izni ister: asistan yeter.
+  r := kaptan_giris('dy', '999999');
+  v_token := r->>'token';
+
+  -- KULLANICININ VERDIGI ORNEK: S=100, G=30 (gun basi 130), L=150
+  --   gelen = L-(S+G) = 20,  yeni stok = L-G = 120
+  insert into stok (kod, ad, birim, miktar) values ('ICA02000001','KOLA','kol',100);
+  insert into siparisler (siparis_no, outlet_kod, outlet_ad, gonderen, kalemler,
+                          tarih, durum, onay_saati)
+  values ('T-1','CSM201','ALIBEY RESTAURANT','test',
+          '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":30}]'::jsonb,
+          -- T-1: kesimden ONCE (kesim now() anina yaziliyor)
+          current_date, 'onaylandi', now() - interval '1 hour');
+
+  r := stok_mutabakat_onizle(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":150}]'::jsonb, false);
+  perform pg_temp.bekle('onizleme S=100', (r->'kalemler'->0->>'s')::numeric = 100);
+  perform pg_temp.bekle('onizleme G=30',  (r->'kalemler'->0->>'g')::numeric = 30);
+  perform pg_temp.bekle('onizleme L=150', (r->'kalemler'->0->>'l')::numeric = 150);
+  perform pg_temp.bekle('YENI STOK = 120 (L-G)', (r->'kalemler'->0->>'m')::numeric = 120);
+  perform pg_temp.bekle('onizleme HICBIR SEY YAZMADI',
+    (select miktar from stok where kod = 'ICA02000001') = 100);
+
+  r := stok_mutabakat(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":150}]'::jsonb, false);
+  perform pg_temp.bekle('uygulandi', (r->>'ok')::boolean);
+  perform pg_temp.bekle('stok 120 oldu',
+    (select miktar from stok where kod = 'ICA02000001') = 120);
+
+raise notice '--- kesim (cumartesi): stok dogrudan LN olur ---';
+  delete from stok_yukleme;
+  r := stok_mutabakat(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":150}]'::jsonb, true);
+  perform pg_temp.bekle('kesimde stok = L = 150',
+    (select miktar from stok where kod = 'ICA02000001') = 150);
+  perform pg_temp.bekle('son_kesim kaydedildi',
+    exists (select 1 from ayarlar where anahtar = 'son_kesim'));
+
+raise notice '--- kesimden ONCEKI siparisler G-ye girmez ---';
+  -- Yukaridaki siparis kesimden once onaylandi; artik sayilmamali.
+  r := stok_mutabakat_onizle(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":150}]'::jsonb, false);
+  perform pg_temp.bekle('G sifirlandi', (r->'kalemler'->0->>'g')::numeric = 0);
+  perform pg_temp.bekle('yeni stok = L (G yok)', (r->'kalemler'->0->>'m')::numeric = 150);
+
+  -- Kesimden SONRA yeni bir siparis onaylanirsa G ye girer.
+  insert into siparisler (siparis_no, outlet_kod, outlet_ad, gonderen, kalemler,
+                          tarih, durum, onay_saati)
+  values ('T-2','CSM201','ALIBEY RESTAURANT','test',
+          '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":40}]'::jsonb,
+          -- T-2: kesimden SONRA (kesim now() anina yaziliyor)
+          current_date, 'onaylandi', now() + interval '1 minute');
+  r := stok_mutabakat_onizle(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":150}]'::jsonb, false);
+  perform pg_temp.bekle('kesim sonrasi siparis G-ye girdi', (r->'kalemler'->0->>'g')::numeric = 40);
+  perform pg_temp.bekle('yeni stok = 110', (r->'kalemler'->0->>'m')::numeric = 110);
+
+raise notice '--- G: ONAY miktari esas, yoksa istenen ---';
+  delete from siparisler;
+  -- Depo 30 istenen kalemi 12 olarak onaylamis: G=12 olmali.
+  insert into siparisler (siparis_no, outlet_kod, outlet_ad, gonderen, kalemler,
+                          tarih, durum, onay_saati)
+  values ('T-3','CSM201','ALIBEY RESTAURANT','test',
+          '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":30,"o":12}]'::jsonb,
+          -- T-3: kesimden SONRA (kesim now() anina yaziliyor)
+          current_date, 'onaylandi', now() + interval '1 minute');
+  r := stok_mutabakat_onizle(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":150}]'::jsonb, false);
+  perform pg_temp.bekle('G onay miktarini kullaniyor (12)', (r->'kalemler'->0->>'g')::numeric = 12);
+
+raise notice '--- ONAYLANMAMIS siparis G-ye GIRMEZ ---';
+  insert into siparisler (siparis_no, outlet_kod, outlet_ad, gonderen, kalemler,
+                          tarih, durum)
+  values ('T-4','CSM201','ALIBEY RESTAURANT','test',
+          '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":999}]'::jsonb,
+          current_date, 'talep');
+  r := stok_mutabakat_onizle(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":150}]'::jsonb, false);
+  perform pg_temp.bekle('bekleyen talep G-ye girmedi', (r->'kalemler'->0->>'g')::numeric = 12);
+
+raise notice '--- negatif uyarisi ---';
+  delete from siparisler;
+  insert into siparisler (siparis_no, outlet_kod, outlet_ad, gonderen, kalemler,
+                          tarih, durum, onay_saati)
+  values ('T-5','CSM201','ALIBEY RESTAURANT','test',
+          '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":500}]'::jsonb,
+          -- T-5: kesimden SONRA (kesim now() anina yaziliyor)
+          current_date, 'onaylandi', now() + interval '1 minute');
+  r := stok_mutabakat_onizle(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":150}]'::jsonb, false);
+  perform pg_temp.bekle('negatif kalem sayiliyor', (r->>'negatif')::int = 1);
+  perform pg_temp.bekle('negatif deger dogru (150-500)', (r->'kalemler'->0->>'m')::numeric = -350);
+
+raise notice '--- mukerrer dosya engelleniyor ---';
+  delete from siparisler; delete from stok_yukleme;
+  perform stok_mutabakat(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":77}]'::jsonb, false);
+  v_red := false;
+  begin
+    perform stok_mutabakat(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":77}]'::jsonb, false);
+  exception when others then v_red := (sqlerrm like '%zaten yuklendi%'); end;
+  perform pg_temp.bekle('ayni dosya ikinci kez reddedildi', v_red);
+  perform pg_temp.bekle('zorla ile gecebiliyor',
+    (stok_mutabakat(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":77}]'::jsonb, false, true)->>'ok')::boolean);
+
+raise notice '--- GERI ALMA: stok VE kesim geri doner ---';
+  delete from stok_yukleme; delete from siparisler;
+  delete from ayarlar where anahtar = 'son_kesim';
+  update stok set miktar = 55 where kod = 'ICA02000001';
+  perform stok_mutabakat(v_token,
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":200}]'::jsonb, true);
+  perform pg_temp.bekle('kesim uygulandi, stok 200',
+    (select miktar from stok where kod = 'ICA02000001') = 200);
+  perform pg_temp.bekle('son_kesim yazildi',
+    exists (select 1 from ayarlar where anahtar = 'son_kesim'));
+  perform stok_yukleme_geri_al(v_token,
+    (select id from stok_yukleme order by olusturma desc limit 1));
+  perform pg_temp.bekle('stok eski degerine dondu (55)',
+    (select miktar from stok where kod = 'ICA02000001') = 55);
+  -- Kesim geri alinmazsa bir sonraki mutabakat YANLIS G penceresiyle hesaplar.
+  perform pg_temp.bekle('son_kesim de geri alindi',
+    not exists (select 1 from ayarlar where anahtar = 'son_kesim'));
+
+raise notice '--- yetki: personel mutabakat yapamaz ---';
+  delete from kaptan_deneme;
+  r := kaptan_giris('dp', '111111');
+  v_red := false;
+  begin
+    perform stok_mutabakat_onizle(r->>'token',
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":1}]'::jsonb, false);
+  exception when others then v_red := (sqlerrm like '%yetkiniz yok%'); end;
+  perform pg_temp.bekle('depo personeli mutabakat ONIZLEYEMEZ', v_red);
+  v_red := false;
+  begin
+    perform stok_mutabakat(r->>'token',
+        '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":1}]'::jsonb, false);
+  exception when others then v_red := (sqlerrm like '%yetkiniz yok%'); end;
+  perform pg_temp.bekle('depo personeli mutabakat UYGULAYAMAZ', v_red);
+  delete from kaptan_deneme; delete from siparisler; delete from stok;
+  delete from stok_yukleme; delete from ayarlar where anahtar = 'son_kesim';
   raise notice '';
   raise notice 'TUM SUNUCU TESTLERI GECTI';
 end $t$;

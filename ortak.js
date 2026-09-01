@@ -136,6 +136,131 @@ function trNum(s) {
 // KUM raporu metin satırlarından kalem çıkarır (PDF ve satır-birleştirilmiş Excel).
 // Satır: KOD  AD...  BİRİM  d0 d1 .. d9   (10 sayı; d1=Giriş Satın Alma, d9=Kalan)
 // Dönen: [{k, a, b, kalan, gelen}]
+
+/* ---------- LN stok raporu (whwmd...xlsx) ----------
+   KUM raporu sabit sütun düzenli bir METİN çıktısı; kumParse onu satır satır
+   okuyor. LN ise gerçek bir Excel TABLOSU ve sütun düzeni değişebiliyor, o
+   yüzden sütunlar başlıktan bulunuyor.
+
+   KRİTİK AYRIM -- LN'de iki ayrı stok sütunu var:
+     O 'Eldeki Envanter'  = fiziksel eldeki miktar        <- DOĞRU olan
+     R 'Ekonomik Stok'    = eldeki + sipariş envanteri (Q)
+   Ekonomik stok henüz GELMEMİŞ malı da sayar; onu kullanmak stoğu şişirir.
+   Bu yüzden 'Eldeki Envanter' aranıyor ve kullanıcı önizlemede hangi sütunun
+   seçildiğini görüyor (yanlışsa elle değiştirebiliyor).                     */
+
+// Başlık metnini karşılaştırma için sadeleştirir (Türkçe karakter, boşluk, kasa).
+function lnNorm(x) {
+  return String(x == null ? "" : x).toLocaleLowerCase("tr")
+    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o").replace(/[çÇ]/g, "c")
+    .replace(/\s+/g, " ").trim();
+}
+
+const LN_KOD = /^[A-Z]{3}\d{8}$/;
+const LN_SAYI = /^-?\d+(?:[.,]\d+)?$/;
+
+function lnSayi(v) {
+  const t = String(v == null ? "" : v).trim();
+  if (!LN_SAYI.test(t)) return null;
+  return parseFloat(t.replace(",", "."));
+}
+
+/* Bir sayfadaki sütunları bulur.
+   Döner: { kodSut, adSut, miktarSut, birimSut, baslikSatir, adaylar[] } ya da
+          { hata } -- ne bulunamadığını söyler.
+   adaylar: miktar için seçilebilecek sayısal sütunlar (kullanıcı değiştirebilsin). */
+function lnSutunBul(rows) {
+  if (!rows || !rows.length) return { hata: "Sayfa boş." };
+
+  // 1) Kod sütunu: ürün kodu desenini en çok taşıyan sütun.
+  const kodSay = {};
+  rows.forEach(r => (r || []).forEach((v, j) => {
+    if (LN_KOD.test(String(v == null ? "" : v).trim())) kodSay[j] = (kodSay[j] || 0) + 1;
+  }));
+  const kodlar = Object.keys(kodSay).sort((a, b) => kodSay[b] - kodSay[a]);
+  if (!kodlar.length) return { hata: "Ürün kodu sütunu bulunamadı (ABC12345678 deseni)." };
+  const kodSut = +kodlar[0];
+  const veriSatirlari = rows.filter(r => LN_KOD.test(String((r || [])[kodSut] ?? "").trim()));
+
+  // 2) Başlık satırı: kod satırlarından ÖNCEKİ, en çok dolu hücresi olan satır.
+  const ilkVeri = rows.findIndex(r => LN_KOD.test(String((r || [])[kodSut] ?? "").trim()));
+  let baslikSatir = -1, enCok = 0;
+  for (let i = 0; i < ilkVeri; i++) {
+    const n = (rows[i] || []).filter(v => String(v == null ? "" : v).trim() !== "").length;
+    if (n > enCok) { enCok = n; baslikSatir = i; }
+  }
+  const baslik = j => baslikSatir >= 0 ? String((rows[baslikSatir] || [])[j] ?? "").trim() : "";
+
+  // 3) Sayısal sütun adayları (kod satırlarında).
+  const enGenis = Math.max.apply(null, rows.map(r => (r || []).length));
+  const adaylar = [];
+  for (let j = 0; j < enGenis; j++) {
+    let dolu = 0, sayisal = 0;
+    for (const r of veriSatirlari) {
+      const t = String((r || [])[j] ?? "").trim();
+      if (t === "") continue;
+      dolu++;
+      if (LN_SAYI.test(t)) sayisal++;
+    }
+    // Sayısal sayılması için kod satırlarının çoğunda dolu VE sayısal olmalı.
+    if (dolu >= veriSatirlari.length * 0.9 && sayisal === dolu) {
+      adaylar.push({ i: j, baslik: baslik(j) });
+    }
+  }
+  if (!adaylar.length) return { hata: "Sayısal miktar sütunu bulunamadı." };
+
+  // 4) Miktar sütunu: başlığı 'eldeki envanter' olan. Bulunamazsa ilk aday
+  //    seçilir ama kullanıcı önizlemede görüp değiştirebilir.
+  let miktarSut = -1;
+  for (const a of adaylar) if (lnNorm(a.baslik).indexOf("eldeki") >= 0) { miktarSut = a.i; break; }
+  if (miktarSut < 0) miktarSut = adaylar[0].i;
+
+  // 5) Ad sütunu: kodun hemen sağındaki metin sütunu (LN'de M).
+  let adSut = -1;
+  for (let j = kodSut + 1; j < enGenis; j++) {
+    let doluMetin = 0;
+    for (const r of veriSatirlari) {
+      const t = String((r || [])[j] ?? "").trim();
+      if (t !== "" && !LN_SAYI.test(t)) doluMetin++;
+    }
+    if (doluMetin >= veriSatirlari.length * 0.9) { adSut = j; break; }
+  }
+
+  // 6) Birim sütunu: başlığı 'birim' olan metin sütunu.
+  let birimSut = -1;
+  for (let j = 0; j < enGenis; j++) if (lnNorm(baslik(j)) === "birim") { birimSut = j; break; }
+
+  return { kodSut, adSut, miktarSut, birimSut, baslikSatir, adaylar,
+           satirSayisi: veriSatirlari.length };
+}
+
+// Sütun eşlemesi verilmiş bir sayfayı kalemlere çevirir.
+// Döner: [{ k, a, b, m }]  (m = LN'in gösterdiği miktar)
+function lnParse(rows, sut) {
+  const out = [];
+  for (const r of rows || []) {
+    const kod = String((r || [])[sut.kodSut] ?? "").trim();
+    if (!LN_KOD.test(kod)) continue;
+    const m = lnSayi((r || [])[sut.miktarSut]);
+    if (m === null) continue;
+    out.push({
+      k: kod,
+      a: sut.adSut >= 0 ? String((r || [])[sut.adSut] ?? "").trim().slice(0, 120) : kod,
+      b: sut.birimSut >= 0 ? (String((r || [])[sut.birimSut] ?? "").trim().slice(0, 20) || "ad") : "ad",
+      m: m,
+    });
+  }
+  return out;
+}
+
+// Sütun harfini gösterir (0 -> A, 14 -> O). Kullanıcı Excel'de doğrulayabilsin.
+function lnSutunAdi(i) {
+  let s = "";
+  i = Number(i);
+  while (i >= 0) { s = String.fromCharCode(65 + (i % 26)) + s; i = Math.floor(i / 26) - 1; }
+  return s;
+}
 function kumParse(satirlar) {
   const KOD = /^([A-Z]{3}\d{8})\s+(.+)$/;
   const NUM = /^-?[\d.]*\d(?:,\d+)?$|^-?\d+(?:\.\d+)?$/;

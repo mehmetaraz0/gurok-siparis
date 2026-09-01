@@ -148,6 +148,71 @@ console.log("=== 11. miktarHaritasiTemizle (attribute enjeksiyonu koruması) ===
   ok("sayıya çevrilen geçti", temiz["ABC12345670"] === 9);
 }
 
+console.log("=== 12. LN stok raporu ayrıştırıcısı ===");
+{
+  // Gerçek LN çıktısının (whwmd...xlsx) yapısı: başlık 1. satırda, kodlar L
+  // sütununda, ad M, RAF N, "Eldeki Envanter" O, "Ekonomik Stok" R, "Birim" S.
+  const B = (i, v) => { const r = []; r[i] = v; return r; };
+  const satir = (kod, ad, raf, eldeki, ayrilmis, siparis, ekonomik, birim) => {
+    const r = [];
+    r[3] = "809"; r[4] = "100"; r[5] = "CLUB ISLETME DEPO"; r[7] = "810";
+    r[11] = kod; r[12] = ad; r[13] = raf; r[14] = eldeki;
+    r[15] = ayrilmis; r[16] = siparis; r[17] = ekonomik; r[18] = birim;
+    return r;
+  };
+  const baslik = [];
+  baslik[0] = "Import Status"; baslik[3] = "Company"; baslik[4] = "Depo";
+  baslik[10] = "Kalem"; baslik[13] = "RAF"; baslik[14] = "Eldeki Envanter";
+  baslik[15] = "Ayrılmış Envanter"; baslik[16] = "Sipariş Envanteri";
+  baslik[17] = "Ekonomik Stok"; baslik[18] = "Birim";
+  const rows = [baslik,
+    satir("ICB01000003", "BIRA SISE 33 CL 30 LU", "BIRA SIS", "0",  "0", "126", "126", "kol"),
+    satir("ICB01000005", "BIRA FICI 50 LT",       "",         "23", "0", "0",   "23",  "fic"),
+    satir("ICB01000010", "BIRA MALT 25 CL 24 LU", "ALK25",    "8",  "0", "0",   "8",   "kol"),
+    satir("ICB01000011", "BIRA SISE 30 CL 24 LU", "BIRA1",    "78", "0", "126", "204", "kol")];
+
+  const t = tarayiciKur({});
+  t.ctx.__rows = rows;
+  const sut = t.ev("lnSutunBul(__rows)");
+  ok("hata yok", !sut.hata, sut.hata);
+  ok("kod sütunu L", t.ev("lnSutunAdi(" + sut.kodSut + ")") === "L");
+  ok("ad sütunu M", t.ev("lnSutunAdi(" + sut.adSut + ")") === "M");
+  ok("birim sütunu S", t.ev("lnSutunAdi(" + sut.birimSut + ")") === "S");
+  // EN KRİTİK: "Eldeki Envanter" (fiziksel) seçilmeli, "Ekonomik Stok" DEĞİL.
+  // Ekonomik stok henüz gelmemiş sipariş envanterini de içeriyor; onu almak
+  // stoğu şişirir (gerçek dosyada 60 üründe 5320 birim fark vardı).
+  ok("miktar sütunu O (Eldeki Envanter)",
+      t.ev("lnSutunAdi(" + sut.miktarSut + ")") === "O",
+      t.ev("lnSutunAdi(" + sut.miktarSut + ")"));
+  ok("R (Ekonomik Stok) seçilmedi", t.ev("lnSutunAdi(" + sut.miktarSut + ")") !== "R");
+
+  t.ctx.__sut = sut;
+  const kalemler = t.ev("lnParse(__rows, __sut)");
+  ok("4 kalem ayrıştırıldı", kalemler.length === 4, String(kalemler.length));
+  ok("miktarlar doğru",
+      kalemler.map(k => k.m).join(",") === "0,23,8,78",
+      kalemler.map(k => k.m).join(","));
+  ok("birimler doğru", kalemler.map(k => k.b).join(",") === "kol,fic,kol,kol");
+  ok("adlar doğru", kalemler[1].a === "BIRA FICI 50 LT", kalemler[1].a);
+
+  // Kullanıcı sütunu değiştirebilmeli (LN formatı değişirse tek çıkış yolu).
+  const R = sut.adaylar.find(a => a.baslik === "Ekonomik Stok");
+  ok("Ekonomik Stok aday listesinde var", !!R);
+  t.ctx.__sutR = Object.assign({}, sut, { miktarSut: R.i });
+  const yanlis = t.ev("lnParse(__rows, __sutR)");
+  ok("elle seçilen sütun kullanılıyor",
+      yanlis.map(k => k.m).join(",") === "126,23,8,204",
+      yanlis.map(k => k.m).join(","));
+}
+
+console.log("=== 12b. LN: kod sütunu yoksa açık hata ===");
+{
+  const t = tarayiciKur({});
+  t.ctx.__rows = [["a", "b"], ["1", "2"]];
+  const sut = t.ev("lnSutunBul(__rows)");
+  ok("hata döndü", !!sut.hata);
+  ok("hata anlaşılır", /Ürün kodu/.test(sut.hata), sut.hata);
+}
 };
 
 if (require.main === module) {

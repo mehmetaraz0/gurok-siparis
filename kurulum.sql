@@ -1004,7 +1004,9 @@ create table if not exists public.stok_yukleme (
   olusturma       timestamptz not null default now()
 );
 alter table public.stok_yukleme drop constraint if exists stok_yukleme_mod_chk;
-alter table public.stok_yukleme add constraint stok_yukleme_mod_chk check (mod in ('baseline','malkabul'));
+-- Gunluk LN mutabakati iki mod ekledi: normal ve kesim (cumartesi).
+alter table public.stok_yukleme add constraint stok_yukleme_mod_chk
+  check (mod in ('baseline','malkabul','mutabakat','mutabakat-kesim'));
 create index if not exists stok_yukleme_zaman_idx on public.stok_yukleme (olusturma desc);
 -- Bir imza aynı anda yalnızca bir GEÇERLİ yüklemede olabilir. Geri alınanlar ve
 -- bilerek zorlananlar dışarıda kalır (yarış durumuna karşı ikinci kemer).
@@ -1149,15 +1151,165 @@ end $$;
 --  • mal kabul → eklenen miktar geri ÇIKARILIR (aradaki sipariş onayları korunur)
 --  • baseline  → yükleme ÖNCESİ değerlere dönülür (o yüklemeden sonraki
 --                onay düşümleri de geri gelir; bu yüzden istemci uyarı gösterir)
+
+-- ================= GÜNLÜK LN MUTABAKATI =================
+-- LN günlük tüketimi İŞLEMİYOR; tüketimi haftada bir (Cumartesi) topluyor.
+-- Bu yüzden hafta ortasında LN'in stok sayısı gerçeğin ÜSTÜNDE: satılanı
+-- henüz düşmemiş. Anlık doğru sayıyı bu sistem biliyor (her onaylanan sipariş
+-- stoğu canlı düşürüyor). LN'i her gün baseline gibi uygulamak canlı takibi
+-- BOZAR: LN'in geç kalan tüketimi, sistemin canlı düşürdüğünü ezer.
+--
+-- Formül (ürün bazında):
+--   S = sistemdeki stok (siparişlerle zaten düşmüş)
+--   G = son kesimden beri ONAYLANAN siparişler = LN'in henüz işlemediği tüketim
+--   L = bugün yüklenen LN sayısı
+--   gelen mal (fark) = L - (S + G)
+--   yeni stok        = S + fark = L - G
+-- Örnek: S=100, G=30 (gün başı 130), L=150 -> gelen 20, yeni stok 120.
+--
+-- Cumartesi (kesim): LN tüketimi işlemiştir -> yeni stok = L, sayaç sıfırlanır.
+alter table public.stok_yukleme add column if not exists onceki_kesim timestamptz;
+
+-- Son kesim anı. Hiç kesim yapılmamışsa en yakın GEÇMİŞ cumartesi 00:00.
+-- Bu varsayılan yalnızca ilk yüklemeye kadar geçerli; önizleme pencereyi
+-- ekranda gösteriyor, kullanıcı yanlışsa kesim modunu seçerek düzeltir.
+create or replace function public.son_kesim_getir()
+returns timestamptz language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select nullif(deger,'')::timestamptz from ayarlar where anahtar = 'son_kesim'),
+    ((date_trunc('week', (now() at time zone 'Europe/Istanbul')) - interval '2 days')
+       at time zone 'Europe/Istanbul'));
+$$;
+
+-- Önizleme ve uygulama AYNI hesabı kullanır; ikisi birbirinden sapmasın diye
+-- tek fonksiyonda. İç fonksiyon: anon'a grant YOK.
+create or replace function public.stok_mutabakat_hesapla(p_kalemler jsonb, p_kesim boolean)
+returns jsonb language plpgsql stable security definer set search_path = public, extensions as $$
+declare v_kesim timestamptz; v_sonuc jsonb;
+begin
+  v_kesim := son_kesim_getir();
+  with ham as (
+    select el->>'k' kod, left(el->>'a',120) ad, left(coalesce(el->>'b','ad'),20) birim,
+           (el->>'m')::numeric l
+      from jsonb_array_elements(p_kalemler) el
+     where el->>'k' ~ '^[A-Z]{3}[0-9]{8}$' and (el->>'m') ~ '^-?[0-9]+(\.[0-9]+)?$'),
+  -- Aynı kod birden çok satırda gelebilir (çok sayfalı Excel): LN bir ANLIK
+  -- GÖRÜNTÜ olduğu için toplanmaz, en büyük değer alınır (baseline ile aynı).
+  veri as (select kod, max(ad) ad, max(birim) birim, max(l) l from ham group by kod),
+  -- G: son kesimden beri onaylanan siparişlerin kalemleri. Miktar olarak
+  -- deponun ONAY miktarı ('o') geçerli; yoksa barın istediği ('m').
+  tuketim as (
+    select el->>'k' kod, sum(coalesce((el->>'o')::numeric, (el->>'m')::numeric)) g
+      from siparisler sp, jsonb_array_elements(sp.kalemler) el
+     where sp.durum = 'onaylandi' and sp.onay_saati > v_kesim
+       and el->>'k' ~ '^[A-Z]{3}[0-9]{8}$'
+     group by el->>'k')
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'k', v.kod, 'a', v.ad, 'b', v.birim,
+           's', coalesce(st.miktar, 0),
+           'g', coalesce(t.g, 0),
+           'l', v.l,
+           -- kesimde tüketim LN'e işlenmiştir, G düşülmez
+           'm', case when p_kesim then v.l else v.l - coalesce(t.g, 0) end,
+           'e', st.miktar) order by v.kod), '[]'::jsonb)
+    into v_sonuc
+    from veri v
+    left join stok st on st.kod = v.kod
+    left join tuketim t on t.kod = v.kod;
+  return jsonb_build_object('kesim', v_kesim, 'kesim_mi', coalesce(p_kesim,false),
+                            'kalemler', v_sonuc);
+end $$;
+
+-- Salt okunur önizleme: hiçbir şey yazmaz. Ekranda S/G/L/gelen/yeni tablosu.
+create or replace function public.stok_mutabakat_onizle(
+  p_token text, p_kalemler jsonb, p_kesim boolean default false)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_h jsonb; v_kalemler jsonb;
+begin
+  perform depo_izin(p_token, 'stok_yukle');
+  if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
+  v_h := stok_mutabakat_hesapla(p_kalemler, p_kesim);
+  v_kalemler := v_h->'kalemler';
+  return jsonb_build_object(
+    'ok', true,
+    'kesim', v_h->>'kesim',
+    'kesim_mi', (v_h->>'kesim_mi')::boolean,
+    'adet', jsonb_array_length(v_kalemler),
+    -- Negatif yeni stok = bir yerde hata var (eksik LN satırı, atlanmış kesim).
+    -- Engellemiyoruz ama sayısını gösteriyoruz ki kullanıcı görsün.
+    'negatif', (select count(*) from jsonb_array_elements(v_kalemler) el
+                 where (el->>'m')::numeric < 0),
+    'kalemler', v_kalemler);
+end $$;
+
+create or replace function public.stok_mutabakat(
+  p_token text, p_kalemler jsonb, p_kesim boolean default false, p_zorla boolean default false)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_h jsonb; v_kalemler jsonb; v_imza text; v_adet int; v_toplam numeric;
+  v_eski timestamptz; v_eskimod text; v_mukerrer boolean := false;
+  v_onceki_kesim timestamptz;
+begin
+  perform depo_izin(p_token, 'stok_yukle');
+  if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
+
+  -- HAM deger okunuyor, son_kesim_getir() DEGIL: o, kayit yoksa hesaplanmis
+  -- varsayilani doner. Onu geri almada yazarsak "kayit yoktu" durumu
+  -- "hesaplanmis deger kaydedildi"ye donusur ve varsayilan artik ilerlemez.
+  select nullif(deger,'')::timestamptz into v_onceki_kesim
+    from ayarlar where anahtar = 'son_kesim';
+  v_h := stok_mutabakat_hesapla(p_kalemler, p_kesim);
+  v_kalemler := v_h->'kalemler';
+  v_adet := jsonb_array_length(v_kalemler);
+  if v_adet = 0 then raise exception 'Uygulanabilir kalem yok'; end if;
+
+  -- İmza LN sayısı (L) üzerinden: aynı LN dosyası ikinci kez uygulanmasın.
+  select encode(extensions.digest(
+           string_agg((el->>'k') || ':' || (el->>'l'), ';' order by el->>'k'), 'sha256'), 'hex'),
+         coalesce(sum((el->>'m')::numeric), 0)
+    into v_imza, v_toplam
+    from jsonb_array_elements(v_kalemler) el;
+
+  select olusturma, mod into v_eski, v_eskimod
+    from stok_yukleme where imza = v_imza and not geri_alindi
+   order by olusturma desc limit 1;
+  if found then
+    v_mukerrer := true;
+    if not coalesce(p_zorla, false) then
+      raise exception 'Bu dosya zaten yuklendi: % (%). Yine de uygulamak icin "yine de uygula" isaretleyin.',
+        to_char(v_eski at time zone 'Europe/Istanbul', 'DD.MM.YYYY HH24:MI'), v_eskimod;
+    end if;
+  end if;
+
+  insert into stok (kod, ad, birim, miktar, guncelleme)
+  select el->>'k', el->>'a', el->>'b', (el->>'m')::numeric, now()
+    from jsonb_array_elements(v_kalemler) el
+  on conflict (kod) do update set miktar=excluded.miktar, ad=excluded.ad,
+    birim=excluded.birim, guncelleme=now();
+
+  -- Kesim yapıldıysa sayaç sıfırlanır: bundan sonraki G buradan itibaren birikir.
+  if coalesce(p_kesim, false) then
+    insert into ayarlar (anahtar, deger) values ('son_kesim', now()::text)
+    on conflict (anahtar) do update set deger = excluded.deger;
+  end if;
+
+  insert into stok_yukleme (mod, imza, kalem_sayisi, toplam, kalemler, zorlandi, onceki_kesim)
+  values (case when coalesce(p_kesim,false) then 'mutabakat-kesim' else 'mutabakat' end,
+          v_imza, v_adet, v_toplam, v_kalemler, v_mukerrer, v_onceki_kesim);
+
+  return jsonb_build_object('ok', true, 'adet', v_adet, 'toplam', v_toplam,
+                           'zorlandi', v_mukerrer, 'kesim_mi', coalesce(p_kesim,false));
+end $$;
 -- Yalnızca EN YENİ geçerli yükleme geri alınabilir: daha yeni bir yükleme
 -- araya girmişse eski kaydın "önceki değer"leri artık doğru değildir.
 create or replace function public.stok_yukleme_geri_al(p_token text, p_id uuid)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_mod text; v_kalemler jsonb; v_zaman timestamptz; v_geri boolean; v_adet int;
+        v_onceki_kesim timestamptz;
 begin
   perform depo_izin(p_token, 'stok_sil');
-  select mod, kalemler, olusturma, geri_alindi
-    into v_mod, v_kalemler, v_zaman, v_geri
+  select mod, kalemler, olusturma, geri_alindi, onceki_kesim
+    into v_mod, v_kalemler, v_zaman, v_geri, v_onceki_kesim
     from stok_yukleme where id = p_id;
   if not found then raise exception 'Yukleme kaydi bulunamadi'; end if;
   if v_geri then raise exception 'Bu yukleme zaten geri alindi'; end if;
@@ -1179,6 +1331,17 @@ begin
   -- Bu yüklemeyle İLK KEZ oluşmuş kayıtlar tamamen silinir
   delete from stok where kod in (
     select el->>'k' from jsonb_array_elements(v_kalemler) el where (el->>'e') is null);
+
+  -- Kesim geri alınıyorsa sayaç da eski anına dönmeli; yoksa bir sonraki
+  -- mutabakat yanlış G penceresiyle hesaplar.
+  if v_mod = 'mutabakat-kesim' then
+    if v_onceki_kesim is null then
+      delete from ayarlar where anahtar = 'son_kesim';
+    else
+      insert into ayarlar (anahtar, deger) values ('son_kesim', v_onceki_kesim::text)
+      on conflict (anahtar) do update set deger = excluded.deger;
+    end if;
+  end if;
 
   update stok_yukleme set geri_alindi = true, geri_alma_saati = now() where id = p_id;
   v_adet := jsonb_array_length(v_kalemler);
@@ -1683,6 +1846,8 @@ grant execute on function public.depo_durum_degistir(text, text, text)          
 grant execute on function public.onay_stok_kontrol(text, text)                        to anon;
 grant execute on function public.stok_baseline(text, jsonb, boolean)                  to anon;
 grant execute on function public.stok_malkabul(text, jsonb, boolean)                  to anon;
+grant execute on function public.stok_mutabakat(text, jsonb, boolean, boolean)         to anon;
+grant execute on function public.stok_mutabakat_onizle(text, jsonb, boolean)           to anon;
 grant execute on function public.stok_yukleme_liste(text, int)                        to anon;
 grant execute on function public.stok_yukleme_geri_al(text, uuid)                     to anon;
 grant execute on function public.stok_liste(text)                                     to anon;

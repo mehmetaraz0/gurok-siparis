@@ -99,15 +99,33 @@
     <div id="stok" style="display:none">
       <div class="stok-arac">
         <div class="stok-yukle" id="stokYukleKutu">
-          <b>KUM raporu yükle</b>
+          <b>Stok dosyası yükle</b>
           <div class="stok-mod">
             <label><input type="radio" name="stokMod" value="baseline" checked onchange="stokModDegisti()">
-              <span>Baseline — stoğu <b>Kalan</b>'a eşitle</span></label>
+              <span>Baseline (KUM) — stoğu <b>Kalan</b>'a eşitle</span></label>
             <label><input type="radio" name="stokMod" value="malkabul" onchange="stokModDegisti()">
-              <span>Mal kabul — <b>gelen</b>i stoğa ekle</span></label>
+              <span>Mal kabul (KUM) — <b>gelen</b>i stoğa ekle</span></label>
+            <label><input type="radio" name="stokMod" value="mutabakat" onchange="stokModDegisti()">
+              <span>📅 Günlük LN mutabakatı — <b>yeni stok = LN − (kesimden beri çıkan)</b></span></label>
+          </div>
+
+          <!-- LN mutabakatına özel ayarlar. LN'de İKİ stok sütunu var:
+               "Eldeki Envanter" (fiziksel) ve "Ekonomik Stok" (eldeki + henüz
+               gelmemiş sipariş). Yanlışını seçmek stoğu şişirir, o yüzden
+               hangisinin seçildiği görünüyor ve değiştirilebiliyor. -->
+          <div id="lnAyar" style="display:none;margin:8px 0;padding:8px;background:#f7f9fc;border-radius:6px;font-size:12px">
+            <div id="lnSutunBilgi" style="color:#555"></div>
+            <label style="display:block;margin-top:6px">Miktar sütunu:
+              <select id="lnMiktarSut" onchange="lnMiktarSutunDegisti()" style="font-size:12px;padding:3px"></select>
+            </label>
+            <label style="display:flex;gap:6px;align-items:center;margin-top:8px">
+              <input type="checkbox" id="lnKesim" onchange="lnOnizlemeTazele()">
+              <span><b>Kesim (Cumartesi)</b> — LN tüketimi işlemiştir, stok doğrudan LN'e eşitlenir ve sayaç sıfırlanır</span>
+            </label>
           </div>
           <input type="file" id="stokDosya" accept=".xlsx,.xls,.csv,.pdf" onchange="stokDosyaSecildi()">
           <div class="stok-onizle" id="stokOnizle"></div>
+          <div id="lnOnizleme" style="display:none;max-height:320px;overflow:auto;margin-top:8px"></div>
           <label class="stok-zorla" id="stokZorlaKutu" style="display:none">
             <input type="checkbox" id="stokZorla">
             <span>Bu içerik daha önce yüklendi — <b>yine de uygula</b> (stok yeniden değişecek)</span>
@@ -197,6 +215,9 @@ let SIPARISLER = [];            // seçili günün siparişleri (talepler ekran�
 let ACIK_NO = null;             // detayı açık siparişin numarası (null ise liste ekranı)
 let STOK = null;                // stok listesi (null = henüz çekilmedi)
 let stokParsed = null;          // yüklenen dosyadan ayrıştırılan kalemler
+let lnRows = null;              // LN dosyasının ham tablosu (sütun değişince yeniden ayrıştırılır)
+let lnSutun = null;             // bulunan sütun eşlemesi
+let lnOnizle = null;            // sunucudan gelen mutabakat önizlemesi
 let TUKETIM = null;             // tüketim raporu verisi (null = henüz çekilmedi)
 let TUK_ORDERS = [];            // tüketim aralığındaki ham siparişler (outlet çıkış Excel'i)
 let TUK_AKTIF = null;           // seçili tüketim kategorisi
@@ -1265,6 +1286,11 @@ async function stokDosyaSecildi() {
   onizle.textContent = "⏳ Okunuyor: " + f.name;
   try {
     const ad = f.name.toLowerCase();
+    if (document.querySelector('input[name=stokMod]:checked').value === "mutabakat") {
+      if (ad.endsWith(".pdf")) throw new Error("LN mutabakatı Excel dosyası ister (.xlsx).");
+      await lnDosyaOku(f);
+      return;
+    }
     let kalemler;
     if (ad.endsWith(".pdf")) {
       kalemler = await stokPdfOku(f);
@@ -1296,6 +1322,133 @@ async function stokDosyaSecildi() {
     console.error(e);
     onizle.innerHTML = '<span class="hata">Okuma hatası: ' + htmlEsc(e.message || "") + '</span>';
   }
+}
+
+/* ---------- Günlük LN mutabakatı ---------- */
+
+// LN dosyasının ham tablosunu okur (tüm sayfalar), sütunları bulur, önizler.
+async function lnDosyaOku(file) {
+  const onizle = document.getElementById("stokOnizle");
+  lnRows = await lnTabloOku(file);
+  lnSutun = lnSutunBul(lnRows);
+  if (lnSutun.hata) {
+    document.getElementById("lnAyar").style.display = "none";
+    onizle.innerHTML = '<span class="hata">' + htmlEsc(lnSutun.hata) + '</span>';
+    return;
+  }
+  // Kullanıcı hangi sütunun okunduğunu GÖRSÜN; yanlışsa değiştirsin.
+  const sec = document.getElementById("lnMiktarSut");
+  sec.innerHTML = lnSutun.adaylar.map(a =>
+    '<option value="' + a.i + '"' + (a.i === lnSutun.miktarSut ? " selected" : "") + '>'
+    + htmlEsc(lnSutunAdi(a.i) + (a.baslik ? " — " + a.baslik : "")) + '</option>').join("");
+  document.getElementById("lnSutunBilgi").innerHTML =
+    "Kod: <b>" + lnSutunAdi(lnSutun.kodSut) + "</b> · Ad: <b>"
+    + (lnSutun.adSut >= 0 ? lnSutunAdi(lnSutun.adSut) : "—") + "</b> · Birim: <b>"
+    + (lnSutun.birimSut >= 0 ? lnSutunAdi(lnSutun.birimSut) : "—") + "</b> · "
+    + lnSutun.satirSayisi + " ürün satırı";
+  document.getElementById("lnAyar").style.display = "";
+  // Cumartesi ise kesim kutusu işaretli gelir (kullanıcı değiştirebilir).
+  document.getElementById("lnKesim").checked = (new Date().getDay() === 6);
+  await lnOnizlemeTazele();
+}
+
+// Excel'in TÜM sayfalarını satır dizisi olarak döndürür.
+function lnTabloOku(file) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onerror = () => reject(new Error("dosya okunamadı"));
+    rd.onload = () => {
+      try {
+        const wb = XLSX.read(rd.result, { type: "array" });
+        let hepsi = [];
+        wb.SheetNames.forEach(ad => {
+          hepsi = hepsi.concat(
+            XLSX.utils.sheet_to_json(wb.Sheets[ad], { header: 1, raw: false, defval: "" }));
+        });
+        resolve(hepsi);
+      } catch (e) { reject(e); }
+    };
+    rd.readAsArrayBuffer(file);
+  });
+}
+
+function lnMiktarSutunDegisti() {
+  if (!lnSutun) return;
+  lnSutun.miktarSut = Number(document.getElementById("lnMiktarSut").value);
+  lnOnizlemeTazele();
+}
+
+/* Sunucudan önizleme ister ve tabloyu çizer. Hesabı SUNUCU yapıyor:
+   S ve G yalnızca orada var, ayrıca uygulanacak değerin önizlenenle
+   birebir aynı olduğundan emin olmanın tek yolu aynı fonksiyonu kullanmak. */
+async function lnOnizlemeTazele() {
+  const onizle = document.getElementById("stokOnizle");
+  const kutu = document.getElementById("lnOnizleme");
+  const btn = document.getElementById("stokUygulaBtn");
+  btn.disabled = true;
+  lnOnizle = null;
+  if (!lnRows || !lnSutun || lnSutun.hata) return;
+
+  const ham = lnParse(lnRows, lnSutun);
+  const kalemler = ham.filter(k => stokUygun(k.k));
+  if (!kalemler.length) {
+    onizle.innerHTML = '<span class="hata">' + ham.length + ' satır okundu ama hiçbiri stoğa uygun değil.</span>';
+    kutu.style.display = "none";
+    return;
+  }
+  stokParsed = kalemler;
+  onizle.textContent = "⏳ Mutabakat hesaplanıyor...";
+  try {
+    const kesim = document.getElementById("lnKesim").checked;
+    const { data, error } = await SB.rpc("stok_mutabakat_onizle", {
+      ...yetkiArg(), p_kalemler: kalemler, p_kesim: kesim });
+    if (error) throw error;
+    lnOnizle = data;
+    lnOnizlemeCiz(ham.length, kalemler.length);
+    btn.disabled = false;
+  } catch (e) {
+    console.error(e);
+    onizle.innerHTML = '<span class="hata">Önizleme alınamadı: ' + htmlEsc(e.message || "") + '</span>';
+    kutu.style.display = "none";
+  }
+}
+
+function lnOnizlemeCiz(okunan, uygun) {
+  const d = lnOnizle;
+  const kutu = document.getElementById("lnOnizleme");
+  const kesimTarihi = d.kesim ? new Date(d.kesim).toLocaleString("tr-TR") : "—";
+  document.getElementById("stokOnizle").innerHTML =
+    "<b>" + okunan + " satır okundu, " + uygun + " tanesi stoğa uygun</b>"
+    + " (" + (okunan - uygun) + " gıda dışı elendi)."
+    + "<br><small>" + (d.kesim_mi
+        ? "KESİM: stok doğrudan LN'e eşitlenecek, sayaç sıfırlanacak."
+        : "Çıkış penceresi: <b>" + htmlEsc(kesimTarihi) + "</b> → şimdi")
+    + (d.negatif > 0
+        ? ' · <span class="hata"><b>' + d.negatif + ' üründe yeni stok NEGATİF</b> — eksik LN satırı ya da atlanmış kesim olabilir.</span>'
+        : "")
+    + "</small>";
+
+  // Değişen kalemler önce: kullanıcı 322 satırı taramak zorunda kalmasın.
+  const k = (d.kalemler || []).slice().sort((a, b) =>
+    Math.abs(Number(b.m) - Number(b.s)) - Math.abs(Number(a.m) - Number(a.s)));
+  const satir = x => {
+    const S = Number(x.s), G = Number(x.g), L = Number(x.l), Y = Number(x.m);
+    const gelen = L - S - G;
+    return '<tr' + (Y < 0 ? ' style="background:#ffecec"' : "") + '>'
+      + '<td><b>' + htmlEsc(x.k) + '</b></td><td>' + htmlEsc(x.a || "") + '</td>'
+      + '<td style="text-align:right">' + S + '</td>'
+      + '<td style="text-align:right">' + G + '</td>'
+      + '<td style="text-align:right">' + L + '</td>'
+      + '<td style="text-align:right' + (gelen ? ';font-weight:700' : "") + '">' + (gelen ? gelen.toFixed(2).replace(/\.00$/, "") : "") + '</td>'
+      + '<td style="text-align:right;font-weight:700">' + Y + '</td></tr>';
+  };
+  kutu.innerHTML = '<table class="adm-tbl"><thead><tr>'
+    + '<th>KOD</th><th>AD</th><th title="sistemdeki stok">S</th>'
+    + '<th title="kesimden beri çıkan">G</th><th title="LN sayısı">L</th>'
+    + '<th>GELEN</th><th>YENİ STOK</th></tr></thead><tbody>'
+    + k.slice(0, 400).map(satir).join("") + '</tbody></table>'
+    + (k.length > 400 ? '<div class="em">… ' + (k.length - 400) + ' kalem daha</div>' : "");
+  kutu.style.display = "";
 }
 
 function stokExcelOku(file) {
@@ -1351,6 +1504,10 @@ async function stokPdfOku(file) {
 // Mod değişince önizleme eski moda göre kalmasın (baseline "→ kalan",
 // mal kabul "+ gelen" gösterir; yanlış moda bakıp Uygula'ya basılmasın).
 function stokModDegisti() {
+  // Mod değişti: eski önizleme artık geçersiz.
+  document.getElementById("lnAyar").style.display = "none";
+  document.getElementById("lnOnizleme").style.display = "none";
+  lnRows = null; lnSutun = null; lnOnizle = null;
   if (document.getElementById("stokDosya").files.length) stokDosyaSecildi();
 }
 
@@ -1360,14 +1517,28 @@ async function stokUygula() {
   const btn = document.getElementById("stokUygulaBtn");
   const zorla = document.getElementById("stokZorla").checked;
 
-  // Sunucuya {k, a, b, m} gönderilir. Baseline'da m=kalan, mal kabulde m=gelen.
+  // Sunucuya {k, a, b, m} gönderilir. Baseline'da m=kalan, mal kabulde m=gelen,
+  // mutabakatta m=LN sayısı (sunucu ondan yeni stoğu kendi hesaplıyor).
   const kalemler = stokParsed.map(k => ({
-    k: k.k, a: k.a, b: k.b, m: mod === "baseline" ? k.kalan : k.gelen
+    k: k.k, a: k.a, b: k.b,
+    m: mod === "baseline" ? k.kalan : (mod === "malkabul" ? k.gelen : k.m)
   }));
 
   if (mod === "baseline" &&
       !confirm("BASELINE: " + kalemler.length + " kalemin stoğu rapordaki Kalan'a EŞİTLENECEK.\n\n"
              + "Bu, mevcut stok sayılarının üzerine yazar. Devam edilsin mi?")) return;
+
+  if (mod === "mutabakat") {
+    const kesim = document.getElementById("lnKesim").checked;
+    const neg = lnOnizle ? Number(lnOnizle.negatif || 0) : 0;
+    if (!confirm((kesim ? "KESİM (Cumartesi): " : "GÜNLÜK MUTABAKAT: ")
+        + kalemler.length + " kalemin stoğu güncellenecek.\n\n"
+        + (kesim
+            ? "Stok doğrudan LN sayısına eşitlenecek ve çıkış sayacı sıfırlanacak."
+            : "Yeni stok = LN − (kesimden beri çıkan). Sayaç sıfırlanmayacak.")
+        + (neg ? "\n\n⚠ " + neg + " üründe yeni stok NEGATİF çıkıyor." : "")
+        + "\n\nDevam edilsin mi?")) return;
+  }
 
   if (zorla && !confirm("⚠ Bu içerik daha önce uygulandı.\n\n"
       + (mod === "malkabul"
@@ -1378,10 +1549,12 @@ async function stokUygula() {
   btn.disabled = true;
   btn.textContent = "⏳ Uygulanıyor...";
   try {
-    const fn = mod === "baseline" ? "stok_baseline" : "stok_malkabul";
+    const fn = mod === "baseline" ? "stok_baseline"
+             : (mod === "malkabul" ? "stok_malkabul" : "stok_mutabakat");
     // p_zorla YALNIZCA gerektiğinde gönderilir; sunucudaki varsayılanı false.
     const args = { ...yetkiArg(), p_kalemler: kalemler };
     if (zorla) args.p_zorla = true;
+    if (mod === "mutabakat") args.p_kesim = document.getElementById("lnKesim").checked;
 
     const { data, error } = await SB.rpc(fn, args);
     if (error) throw error;
@@ -1389,8 +1562,10 @@ async function stokUygula() {
     btn.textContent = "✅ " + (data.adet ?? "") + " kalem işlendi";
     document.getElementById("stokDosya").value = "";
     document.getElementById("stokOnizle").textContent = "";
+    document.getElementById("lnOnizleme").style.display = "none";
+    document.getElementById("lnAyar").style.display = "none";
     stokZorlaGizle();
-    stokParsed = null;
+    stokParsed = null; lnRows = null; lnSutun = null; lnOnizle = null;
     await stokGetir();
     await yuklemeGetir();
     setTimeout(() => { btn.textContent = "Uygula"; }, 2500);
