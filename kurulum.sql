@@ -343,12 +343,15 @@ create or replace function public.depo_giris(p_sifre text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   delete from kaptan_deneme where zaman < now() - interval '1 day';
-  -- GEÇİŞ: ortak depo şifresi. Depo personeli kendi kullanıcı adı + PIN'ine
-  -- geçtikten sonra bu kapı KAPATILMALI -- tek adım:
-  --     delete from public.ayarlar where anahtar = 'depo_sifre';
-  -- Kapanana kadar N-1 açık kalır: sayaç '#depo' anahtarında GLOBAL olduğu
-  -- için yabancı biri 5 yanlış denemeyle tüm depoyu 15 dakika kilitleyebilir.
-  -- Kullanıcı adı + PIN girişinde sayaç kişiye bağlı olduğu için bu sorun yok.
+  -- ORTAK DEPO ŞİFRESİ 1 Eyl 2026'DA KAPATILDI (denetim N-1). Depo personeli
+  -- kendi kullanıcı adı + PIN'i ile giriyor; sayaç artık kişiye bağlı.
+  -- Eskiden sayaç '#depo' sabit anahtarındaydı, yani KAPI başınaydı: yabancı
+  -- biri 5 yanlış denemeyle tüm depoyu 15 dakika dışarıda bırakabiliyordu.
+  --
+  -- Fonksiyon bilerek DURUYOR: tarayıcısında eski sayfa önbellekte kalmış biri
+  -- burayı çağırdığında PGRST202 yerine ne yapması gerektiğini söyleyen bir
+  -- mesaj alsın. Sayaca dokunmadan hemen döndüğü için '#depo' yolu tamamen ölü.
+  -- Yeniden açmak istenirse: ayarlar'a 'depo_sifre' satırı eklemek yeter.
   if not exists (select 1 from ayarlar where anahtar = 'depo_sifre') then
     return jsonb_build_object('ok', false,
       'hata', 'Ortak depo sifresi kapatildi. Kullanici adi ve PIN ile girin.');

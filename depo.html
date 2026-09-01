@@ -16,27 +16,15 @@
 <div class="kilit" id="kilit">
   <h2>📦 DEPO TOPLAMA</h2>
 
-  <!-- Kişisel giriş: sayaç kişi başına tutulduğu için biri yanlış PIN
-       denemeleriyle diğerlerini kilitleyemez (denetim N-1). -->
-  <div id="kisiGiris">
-    <p>Kullanıcı adınız ve PIN'iniz ile girin</p>
-    <input type="text" id="depoKod" placeholder="Kullanıcı adı"
-           autocomplete="username" autocapitalize="none" spellcheck="false">
-    <input type="password" id="depoPin" placeholder="PIN"
-           autocomplete="current-password" inputmode="numeric">
-    <button id="girisBtn" onclick="giris()">Giriş</button>
-    <button class="cb" onclick="ortakSifreGoster(true)">Ortak şifre ile gir</button>
-  </div>
-
-  <!-- GEÇİŞ: herkesin bildiği tek şifre. Personel kendi hesabına geçtikten
-       sonra bu bölüm kaldırılacak; sunucuda kapatmak tek satır:
-         delete from public.ayarlar where anahtar = 'depo_sifre'; -->
-  <div id="ortakGiris" style="display:none">
-    <p>Ortak depo şifresi<br><small>geçici — kişisel hesaba geçilince kapatılacak</small></p>
-    <input type="password" id="sifre" placeholder="Şifre" autocomplete="current-password">
-    <button id="ortakBtn" onclick="ortakSifreGiris()">Giriş</button>
-    <button class="cb" onclick="ortakSifreGoster(false)">← Kullanıcı adı ile gir</button>
-  </div>
+  <!-- Herkesin bildiği ortak şifre 1 Eyl 2026'da kapatıldı (denetim N-1):
+       sayaç kapı başına tutulduğu için yabancı biri 5 yanlış denemeyle tüm
+       depoyu 15 dakika dışarıda bırakabiliyordu. Artık sayaç kişiye bağlı. -->
+  <p>Kullanıcı adınız ve PIN'iniz ile girin</p>
+  <input type="text" id="depoKod" placeholder="Kullanıcı adı"
+         autocomplete="username" autocapitalize="none" spellcheck="false">
+  <input type="password" id="depoPin" placeholder="PIN"
+         autocomplete="current-password" inputmode="numeric">
+  <button id="girisBtn" onclick="giris()">Giriş</button>
 
   <div class="err" id="hata"></div>
 </div>
@@ -225,17 +213,7 @@ document.getElementById("depoKod").addEventListener("keydown", e => {
 document.getElementById("depoPin").addEventListener("keydown", e => {
   if (e.key === "Enter") giris();
 });
-document.getElementById("sifre").addEventListener("keydown", e => {
-  if (e.key === "Enter") ortakSifreGiris();
-});
 
-// İki giriş kutusu arasında geçiş (geçiş dönemi için).
-function ortakSifreGoster(ac) {
-  document.getElementById("kisiGiris").style.display  = ac ? "none" : "";
-  document.getElementById("ortakGiris").style.display = ac ? "" : "none";
-  document.getElementById("hata").textContent = "";
-  document.getElementById(ac ? "sifre" : "depoKod").focus();
-}
 
 // Kişisel giriş: kullanıcı adı + PIN. Oturum artık KİMİN olduğunu biliyor.
 async function giris() {
@@ -276,44 +254,6 @@ async function giris() {
   btn.textContent = "Giriş";
 }
 
-// GEÇİŞ: ortak şifreyle giriş. Kişisel hesaplara geçilince bu ve HTML'deki
-// #ortakGiris bloğu silinecek.
-async function ortakSifreGiris() {
-  const inp = document.getElementById("sifre");
-  const btn = document.getElementById("ortakBtn");
-  const err = document.getElementById("hata");
-  const deger = inp.value.trim();
-  if (!deger) return;
-
-  btn.disabled = true;
-  btn.textContent = "Kontrol ediliyor...";
-  err.textContent = "";
-
-  try {
-    const g = await sifreIleGiris("depo_giris", deger);
-    if (g.ok) {
-      GIRISLI = true;
-      DEPOCU = null;                 // ortak şifrede kimlik yok
-      sessionStorage.removeItem("gurok_depo_ad");
-      oturumDamgala("gurok_depo");
-      tokenKaydet("gurok_depo");
-      basla();
-    } else {
-      err.textContent = g.hata;      // kilitlenme / kapatıldı uyarısı buradan
-      inp.value = "";
-      inp.focus();
-    }
-  } catch (e) {
-    console.error(e);
-    err.textContent = "Bağlantı kurulamadı. İnternetinizi kontrol edin.";
-    inp.value = "";
-    inp.focus();
-  }
-
-  btn.disabled = false;
-  btn.textContent = "Giriş";
-}
-
 /* Depo bilgisayarı paylaşımlı ve oturum 2 saat sürüyor. Kasten sonlandırma
    yolu olmazsa, kalkıp giden birinin ardından gelen kişi onun adına sipariş
    onaylayabilir ya da stok silebilir. Token sunucuda da iptal edilir. */
@@ -330,8 +270,6 @@ async function cikisYap() {
   document.getElementById("ana").style.display = "none";
   document.getElementById("kilit").style.display = "";
   document.getElementById("hata").textContent = "";
-  ortakSifreGoster(false);                 // kişisel giriş kutusuna dön
-  document.getElementById("sifre").value = "";
   document.getElementById("depoPin").value = "";
 }
 
