@@ -207,11 +207,21 @@ function kaptanArg() {
   return { p_token: TOKEN };
 }
 
-// Sunucu mesajları ASCII geliyor (kurulum.sql'de Türkçe karakter yok).
-// Kilit mesajını ayırt edip ekrana düzgün Türkçe yazar.
+/* Sunucu mesajları ASCII geliyor (kurulum.sql'de Türkçe karakter yok).
+   Bilinen mesajları tanıyıp düzgün Türkçe yazar.
+
+   TANIMA AÇIK LİSTEDİR: bilinmeyen sunucu metnini olduğu gibi ekrana basmıyoruz
+   (gereksiz bilgi sızdırabilir), genel "şifre hatalı" mesajına düşüyoruz. Ama
+   kullanıcının EYLEM almasını gerektiren mesajlar (kilit, kapatılmış kapı)
+   yutulmamalı — eskiden yutuluyordu ve kullanıcı ne olduğunu anlamıyordu. */
 function girisHatasiTr(h, varsayilan) {
-  if (/cok fazla/i.test(String(h || "")))
+  h = String(h || "");
+  if (/cok fazla/i.test(h))
     return "Çok fazla hatalı deneme. 15 dakika sonra tekrar deneyin.";
+  if (/ortak depo sifresi kapatildi/i.test(h))
+    return "Ortak depo şifresi kapatıldı. Kullanıcı adı ve PIN ile girin.";
+  if (/ortak yonetici sifresi kapatildi/i.test(h))
+    return "Ortak yönetici şifresi kapatıldı. Kullanıcı adı ve parola ile girin.";
   return varsayilan || "Şifre hatalı.";
 }
 
@@ -251,9 +261,9 @@ async function kisiGirisi(kod, pin, beklenenRol) {
       // Oturum sunucuda açıldı ama bu ekrana ait değil: sahipsiz bırakma, kapat.
       TOKEN = data.token;
       await oturumuKapat();
-      return { ok: false, hata: rol === "depo"
-        ? "Bu bir DEPO hesabı. Depo ekranından girin."
-        : "Bu hesap depo personeline ait değil. Sipariş ekranından girin." };
+      const EKRAN = { kaptan: "sipariş", depo: "depo", admin: "yönetim" };
+      return { ok: false,
+               hata: "Bu hesap " + (EKRAN[rol] || rol) + " ekranına ait. Oradan girin." };
     }
     TOKEN = data.token;
     return { ok: true, kod: data.kod || kod, ad: data.ad,

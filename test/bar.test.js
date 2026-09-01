@@ -61,7 +61,7 @@ console.log("=== 2b. DEPO hesabıyla sipariş ekranına girilemez ===");
   t.getEl("kaptanPin").value = "111111";
   await t.ev("kaptanGiris()");
   ok("giriş reddedildi", t.ev("KAPTAN") === null);
-  ok("açık mesaj verildi", /DEPO hesabı/.test(t.getEl("kaptanHata").textContent),
+  ok("doğru ekran söylendi", /depo ekranına ait/.test(t.getEl("kaptanHata").textContent),
       t.getEl("kaptanHata").textContent);
   ok("açılan oturum sunucuda kapatıldı",
       t.cagrilar.some(c => c.ad === "oturum_iptal" && c.arg.p_token === "TKN_D"),

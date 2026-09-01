@@ -320,6 +320,134 @@ begin
   perform pg_temp.bekle('depo kullanicisi ETKILENMEDI', (r->>'ok')::boolean);
   delete from kaptan_deneme;
 
+  raise notice '=== 21. YONETICI KULLANICISI (kullanici adi + parola) ===';
+  delete from kaptan_deneme;
+  r := admin_giris('TestAdminSifre2026!');
+  v_admin_token := r->>'token';
+
+  -- Parola kurali role gore: yonetici icin sayisal PIN KABUL EDILMEMELI.
+  v_red := false;
+  begin
+    perform kaptan_ekle(v_admin_token, 'yonetici1', 'Yonetici Bir', '123456', 'hepsi', 'admin');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('yoneticiye 6 haneli PIN verilemiyor', v_red);
+
+  v_red := false;
+  begin
+    perform kaptan_ekle(v_admin_token, 'yonetici1', 'Yonetici Bir', 'kisa', 'hepsi', 'admin');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('kisa parola reddediliyor', v_red);
+
+  perform kaptan_ekle(v_admin_token, 'yonetici1', 'Yonetici Bir', 'UzunParola2026!', 'hepsi', 'admin');
+  perform kaptan_ekle(v_admin_token, 'yonetici2', 'Yonetici Iki', 'BaskaParola2026!', 'hepsi', 'admin');
+  perform pg_temp.bekle('yoneticiler eklendi',
+    (select count(*) from kaptan where rol = 'admin') = 2);
+  perform pg_temp.bekle('yoneticide departman anlamsiz, hepsi yapildi',
+    (select departman from kaptan where kod = 'yonetici1') = 'hepsi');
+
+  -- Kaptan/depo hala SAYISAL PIN kullaniyor
+  v_red := false;
+  begin
+    perform kaptan_ekle(v_admin_token, 'kaptanx', 'Kaptan X', 'harfliparola', 'bar', 'kaptan');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('kaptana harfli parola verilemiyor (PIN kurali korundu)', v_red);
+
+  raise notice '--- yonetici girisi ve oturum tipi ---';
+  r := kaptan_giris('YONETICI1', 'UzunParola2026!');
+  perform pg_temp.bekle('yonetici giris yapabiliyor', (r->>'ok')::boolean);
+  perform pg_temp.bekle('rol admin', r->>'rol' = 'admin');
+  v_kap_token := r->>'token';
+  perform pg_temp.bekle('oturum tipi ADMIN acildi',
+    exists (select 1 from oturum
+             where token_hash = encode(extensions.digest(v_kap_token,'sha256'),'hex')
+               and tip = 'admin' and lower(ref) = 'yonetici1'));
+  perform pg_temp.bekle('oturum KIMIN oldugunu biliyor',
+    (select lower(ref) from oturum
+      where token_hash = encode(extensions.digest(v_kap_token,'sha256'),'hex')) = 'yonetici1');
+
+  raise notice '--- yonetici token-i admin RPC-lerinde calisiyor ---';
+  perform pg_temp.bekle('kaptan_liste calisti', kaptan_liste(v_kap_token) is not null);
+  perform pg_temp.bekle('outlet_liste calisti', outlet_liste(v_kap_token) is not null);
+
+  raise notice '--- roller birbirine gecmiyor ---';
+  v_red := false;
+  begin perform stok_liste(v_kap_token);          -- depo RPC-si
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('yonetici DEPO ekranina GIREMIYOR', v_red);
+
+  -- katalog_getir admin token-ini BILEREK kabul eder: yonetim paneli listeleri
+  -- onunla duzenliyor. Yoneticiyi ayiran sey katalogu okumak degil, KAPTANA
+  -- OZEL eylemler -- siparis acmak ve birimin bekleyen siparislerini gormek.
+  r := katalog_getir('CSM201', v_kap_token);
+  perform pg_temp.bekle('yonetici katalogu gorebiliyor (panel icin gerekli)',
+    jsonb_typeof(r) = 'array' or (r->>'ok') is distinct from 'false');
+
+  v_red := false;
+  begin
+    r := siparis_gonder('CSM201', 'ALIBEY RESTAURANT',
+                        '[{"k":"ICA02000001","a":"TEST","b":"kol","m":10}]'::jsonb,
+                        null, gen_random_uuid()::text, v_kap_token);
+    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('yonetici SIPARIS ACAMIYOR', v_red);
+
+  v_red := false;
+  begin
+    r := bekleyen_siparisler('CSM201', null, v_kap_token);
+    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('yonetici birim makbuzlarini goremiyor', v_red);
+
+  v_red := false;
+  begin perform kaptan_liste(v_depo_token);       -- eski ortak-sifre admin token-i degil
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('depo token-i ADMIN RPC-sinde calismiyor', v_red);
+
+  raise notice '=== 22. Yonetici kilidi de KISI basina ===';
+  delete from kaptan_deneme;
+  for n in 1..6 loop
+    perform kaptan_giris('yonetici1', 'yanlisParola' || n);
+  end loop;
+  r := kaptan_giris('yonetici1', 'UzunParola2026!');
+  perform pg_temp.bekle('yonetici1 kilitlendi', (r->>'ok')::boolean is false);
+  r := kaptan_giris('yonetici2', 'BaskaParola2026!');
+  perform pg_temp.bekle('yonetici2 ETKILENMEDI', (r->>'ok')::boolean);
+  delete from kaptan_deneme;
+
+  raise notice '=== 23. Yonetici KENDI parolasini degistirebiliyor ===';
+  r := kaptan_giris('yonetici1', 'UzunParola2026!');
+  v_kap_token := r->>'token';
+  -- Sayisal PIN-e dusurmeye calismak reddedilmeli
+  v_red := false;
+  begin
+    r := kaptan_sifre_degistir(v_kap_token, 'UzunParola2026!', '123456');
+    v_red := (jsonb_typeof(r) = 'object' and (r->>'ok') = 'false');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('yonetici parolasini 6 haneli PIN yapamiyor', v_red);
+
+  r := kaptan_sifre_degistir(v_kap_token, 'UzunParola2026!', 'YeniUzunParola2026!');
+  perform pg_temp.bekle('parola degistirildi', (r->>'ok')::boolean);
+  select count(*) into n from oturum where lower(ref) = 'yonetici1';
+  perform pg_temp.bekle('yonetici oturumlari kapandi', n = 0);
+  r := kaptan_giris('yonetici1', 'YeniUzunParola2026!');
+  perform pg_temp.bekle('yeni parola calisiyor', (r->>'ok')::boolean);
+  delete from kaptan_deneme;
+
+  raise notice '=== 24. Ortak YONETICI sifresi kapatilabiliyor ===';
+  r := admin_giris('TestAdminSifre2026!');
+  perform pg_temp.bekle('kapatmadan once calisiyor', (r->>'ok')::boolean);
+  delete from ayarlar where anahtar = 'admin_sifre';
+  r := admin_giris('TestAdminSifre2026!');
+  perform pg_temp.bekle('kapatildiktan sonra reddediliyor', (r->>'ok')::boolean is false);
+  perform pg_temp.bekle('mesaj yonlendiriyor', r->>'hata' like '%Kullanici adi ve parola%');
+  -- sayaca DOKUNMADAN donmeli: 6 cagri sonrasi hala kilit mesaji YOK
+  for n in 1..6 loop perform admin_giris('yanlis' || n); end loop;
+  r := admin_giris('yanlis7');
+  perform pg_temp.bekle('kapali kapi sayaci BESLEMIYOR', r->>'hata' like 'Ortak yonetici%');
+  r := kaptan_giris('yonetici1', 'YeniUzunParola2026!');
+  perform pg_temp.bekle('yonetici kullanicisi ETKILENMEDI', (r->>'ok')::boolean);
+  delete from kaptan_deneme;
+
   raise notice '';
   raise notice 'TUM SUNUCU TESTLERI GECTI';
 end $t$;

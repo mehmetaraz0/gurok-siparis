@@ -15,9 +15,30 @@
 <!-- ===== Şifre ===== -->
 <div class="kilit" id="kilit">
   <h2>🛠 LİSTE YÖNETİMİ</h2>
-  <p>Yönetici şifresini girin</p>
-  <input type="password" id="sifre" placeholder="Şifre" autocomplete="current-password">
-  <button id="girisBtn" onclick="giris()">Giriş</button>
+
+  <!-- Kişisel giriş: sayaç kişi başına tutulduğu için biri yanlış deneme
+       yaparak diğerlerini kilitleyemez (denetim N-1). -->
+  <div id="kisiGiris">
+    <p>Kullanıcı adınız ve parolanız ile girin</p>
+    <input type="text" id="admKod" placeholder="Kullanıcı adı"
+           autocomplete="username" autocapitalize="none" spellcheck="false">
+    <input type="password" id="admParola" placeholder="Parola"
+           autocomplete="current-password">
+    <button id="girisBtn" onclick="giris()">Giriş</button>
+    <button class="cb" onclick="ortakSifreGoster(true)">Ortak şifre ile gir</button>
+  </div>
+
+  <!-- GEÇİŞ: herkesin bildiği tek şifre. Yönetici hesabı açmak için yönetici
+       yetkisi gerektiğinden bu kapı, ilk hesaplar açılana kadar ZORUNLU.
+       Kapatmak (en az iki yönetici hesabı açtıktan sonra):
+         delete from public.ayarlar where anahtar = 'admin_sifre'; -->
+  <div id="ortakGiris" style="display:none">
+    <p>Ortak yönetici şifresi<br><small>geçici — kişisel hesaba geçilince kapatılacak</small></p>
+    <input type="password" id="sifre" placeholder="Şifre" autocomplete="current-password">
+    <button id="ortakBtn" onclick="ortakSifreGiris()">Giriş</button>
+    <button class="cb" onclick="ortakSifreGoster(false)">← Kullanıcı adı ile gir</button>
+  </div>
+
   <div class="err" id="hata"></div>
 </div>
 
@@ -30,6 +51,8 @@
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="seedBaslat()">☁ Mevcut listeleri buluta yükle</button>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="pinYonetimiAc()">🔑 Outlet PIN'leri</button>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="kaptanPaneliAc()">🧑‍✈️ Kullanıcılar</button>
+      <span id="admKim" style="font-size:12px;opacity:.85"></span>
+      <button class="cb" id="parolaBtn" style="width:auto;margin:0;padding:9px 14px;display:none" onclick="parolaDegistir()">🔑 Parolamı değiştir</button>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="cikisYap()">🚪 Çıkış</button>
     </div>
   </div>
@@ -52,7 +75,7 @@
       <input id="kAd" placeholder="Ad Soyad" oninput="kaptanKodGuncelle()">
       <input id="kKod" placeholder="kullanıcı adı (otomatik)" maxlength="10" oninput="this.dataset.elle='1'" autocapitalize="off">
       <input id="kPin" placeholder="PIN (en az 6 hane)" maxlength="12" inputmode="numeric">
-      <select id="kRol" title="Rol" onchange="kaptanRolFormGuncelle()"><option value="kaptan">Kaptan (sipariş)</option><option value="depo">Depo</option></select>
+      <select id="kRol" title="Rol" onchange="kaptanRolFormGuncelle()"><option value="kaptan">Kaptan (sipariş)</option><option value="depo">Depo</option><option value="admin">Yönetici</option></select>
       <select id="kDep" title="Departman"><option value="bar">Bar</option><option value="mutfak">Mutfak</option><option value="hepsi">Hepsi</option></select>
       <button class="gb" onclick="kaptanEkle()">+ Ekle</button>
     </div>
@@ -86,28 +109,81 @@
 <script src="ortak.js"></script>
 <script>
 let GIRISLI = false;    // giriş yapıldı mı (oturum token'ı ortak.js'te TOKEN)
+let YONETICI = null;    // kişisel girişte { kod, ad }; ortak şifrede null
 let LISTE = null;       // seçili liste kimliği
 let KALEMLER = [];      // seçili listenin kalemleri (ekranda görülen sıra)
 
 /* ---- Giriş ---- */
 // Oturum YALNIZCA token ile sürer; şifre saklanmaz (M-1).
 sessionStorage.removeItem("gurok_admin_sifre");   // eski sürümden kalmışsa temizle
-if (tokenGeriYukle("gurok_admin")) { GIRISLI = true; basla(); }
-document.getElementById("sifre").addEventListener("keydown", e => { if (e.key === "Enter") giris(); });
+if (tokenGeriYukle("gurok_admin")) {
+  GIRISLI = true;
+  const ad = sessionStorage.getItem("gurok_admin_ad");
+  if (ad) YONETICI = { kod: null, ad: ad };   // yenilemeden sonra da kim olduğu görünsün
+  basla();
+}
+document.getElementById("admKod").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("admParola").focus();
+});
+document.getElementById("admParola").addEventListener("keydown", e => { if (e.key === "Enter") giris(); });
+document.getElementById("sifre").addEventListener("keydown", e => { if (e.key === "Enter") ortakSifreGiris(); });
 
+// İki giriş kutusu arasında geçiş (geçiş dönemi için).
+function ortakSifreGoster(ac) {
+  document.getElementById("kisiGiris").style.display  = ac ? "none" : "";
+  document.getElementById("ortakGiris").style.display = ac ? "" : "none";
+  document.getElementById("hata").textContent = "";
+  document.getElementById(ac ? "sifre" : "admKod").focus();
+}
+
+// Kişisel giriş: kullanıcı adı + parola. Oturum kimin olduğunu biliyor.
 async function giris() {
-  const inp = document.getElementById("sifre"), btn = document.getElementById("girisBtn"), err = document.getElementById("hata");
+  const kodInp = document.getElementById("admKod");
+  const parInp = document.getElementById("admParola");
+  const btn = document.getElementById("girisBtn"), err = document.getElementById("hata");
+  const kod = kodInp.value.trim(), parola = parInp.value;
+  if (!kod) { err.textContent = "Kullanıcı adı girin."; kodInp.focus(); return; }
+  if (!parola) { err.textContent = "Parola girin."; parInp.focus(); return; }
+  btn.disabled = true; btn.textContent = "..."; err.textContent = "";
+  try {
+    const g = await kisiGirisi(kod, parola, "admin");
+    if (g.ok) {
+      GIRISLI = true;
+      YONETICI = { kod: g.kod, ad: g.ad };
+      sessionStorage.setItem("gurok_admin_ad", g.ad);
+      oturumDamgala("gurok_admin");
+      tokenKaydet("gurok_admin");
+      kodInp.value = ""; parInp.value = "";
+      basla();
+    } else {
+      err.textContent = g.hata;      // kilitlenme uyarısı da buradan gelir
+      parInp.value = ""; parInp.focus();
+    }
+  } catch (e) {
+    err.textContent = "Bağlantı kurulamadı.";
+    parInp.value = ""; parInp.focus();
+  }
+  btn.disabled = false; btn.textContent = "Giriş";
+}
+
+// GEÇİŞ: ortak şifreyle giriş. İlk yönetici hesapları açılana kadar ZORUNLU
+// (hesap açmak için yönetici yetkisi gerekiyor). Sonra kapatılacak.
+async function ortakSifreGiris() {
+  const inp = document.getElementById("sifre"), btn = document.getElementById("ortakBtn"), err = document.getElementById("hata");
   const d = inp.value.trim();
   if (!d) return;
   btn.disabled = true; btn.textContent = "..."; err.textContent = "";
   try {
     const g = await sifreIleGiris("admin_giris", d);
     if (g.ok) {
-      GIRISLI = true; oturumDamgala("gurok_admin");
+      GIRISLI = true;
+      YONETICI = null;               // ortak şifrede kimlik yok
+      sessionStorage.removeItem("gurok_admin_ad");
+      oturumDamgala("gurok_admin");
       tokenKaydet("gurok_admin");
       basla();
     } else {
-      err.textContent = g.hata;      // kilitlenme uyarısı da buradan gelir
+      err.textContent = g.hata;      // kilitlenme / kapatıldı uyarısı buradan
       inp.value = ""; inp.focus();
     }
   } catch (e) {
@@ -117,25 +193,55 @@ async function giris() {
   btn.disabled = false; btn.textContent = "Giriş";
 }
 
+// Yönetici kendi parolasını değiştirir. Sunucu değişimden sonra bu kişinin
+// TÜM oturumlarını kapatıyor, o yüzden yeniden giriş isteniyor.
+async function parolaDegistir() {
+  if (!YONETICI) return;
+  const eski = prompt("Mevcut parolanız:");
+  if (eski === null) return;
+  if (!eski) { alert("Mevcut parola gerekli."); return; }
+  const yeni = prompt("Yeni parola (en az 10 karakter):");
+  if (yeni === null) return;
+  if (yeni.length < 10) { alert("Parola en az 10 karakter olmalı."); return; }
+  const yeni2 = prompt("Yeni parolayı tekrar girin:");
+  if (yeni2 === null) return;
+  if (yeni !== yeni2) { alert("İki parola aynı değil, tekrar deneyin."); return; }
+  try {
+    const { data, error } = await SB.rpc("kaptan_sifre_degistir",
+      { ...yetkiArg(), p_eski_pin: eski, p_yeni_pin: yeni });
+    if (error) throw error;
+    const kh = rpcKimlikHatasi(data);
+    if (kh) throw new Error(kh);
+    alert("Parolanız değiştirildi. Yeni parola ile tekrar giriş yapın.");
+    await cikisYap(true);
+  } catch (e) { alert("Değiştirilemedi: " + (e.message || "hata")); }
+}
+
 /* Yönetici oturumu açık kalırsa sıradaki kişi kaptan ekleyip PIN sıfırlayabilir.
    Kasten kapatma yolu şart. Token sunucuda da iptal edilir. */
-async function cikisYap() {
-  if (!confirm("Oturumu kapatmak istiyor musunuz?")) return;
+// p_sessiz: parola değişiminden sonra onay sorulmadan çıkılır.
+async function cikisYap(sessiz) {
+  if (!sessiz && !confirm("Oturumu kapatmak istiyor musunuz?")) return;
   await oturumuKapat();
   GIRISLI = false;
+  YONETICI = null;
   LISTE = null; KALEMLER = [];
-  ["gurok_admin_token", "gurok_admin_zaman", "gurok_admin_sifre"]
+  ["gurok_admin_token", "gurok_admin_zaman", "gurok_admin_sifre", "gurok_admin_ad"]
     .forEach(k => { try { sessionStorage.removeItem(k); } catch (e) {} });
   document.getElementById("ana").style.display = "none";
   document.getElementById("kilit").style.display = "";
   document.getElementById("hata").textContent = "";
-  const inp = document.getElementById("sifre");
-  inp.value = ""; inp.focus();
+  ortakSifreGoster(false);                 // kişisel giriş kutusuna dön
+  document.getElementById("sifre").value = "";
+  document.getElementById("admParola").value = "";
 }
 
 function basla() {
   document.getElementById("kilit").style.display = "none";
   document.getElementById("ana").style.display = "";
+  document.getElementById("admKim").textContent = YONETICI ? ("👤 " + YONETICI.ad) : "";
+  // Ortak şifreyle girildiyse değiştirilecek kişisel parola yok.
+  document.getElementById("parolaBtn").style.display = YONETICI ? "" : "none";
   dolduPickerlar();
 }
 
@@ -393,7 +499,8 @@ function pinYonetimiKapat() {
 }
 
 /* ---- Kaptan yönetimi ---- */
-let KAPTAN_KODLAR = new Set();   // mevcut kaptan kodları (çakışma önleme)
+let KAPTAN_KODLAR = new Set();   // mevcut kullanıcı kodları (çakışma önleme)
+let KAPTAN_ROL = new Map();      // kod -> rol (şifre sıfırlarken kural için)
 
 // Türkçe sadeleştir: küçük harf, tr karakter -> ascii, harf/rakam dışını at
 function trSade(s) {
@@ -442,9 +549,11 @@ async function kaptanListele() {
     if (error) throw error;
     const list = data || [];
     KAPTAN_KODLAR = new Set(list.map(k => k.kod));   // öneri çakışma kontrolü için
+    KAPTAN_ROL = new Map(list.map(k => [k.kod, k.rol || "kaptan"]));
     document.getElementById("kaptanCount").textContent =
       list.filter(k => (k.rol || "kaptan") === "kaptan").length + " kaptan · " +
-      list.filter(k => k.rol === "depo").length + " depo";
+      list.filter(k => k.rol === "depo").length + " depo · " +
+      list.filter(k => k.rol === "admin").length + " yönetici";
     const depSel = (kod, d) => {
       const o = (v, t) => '<option value="' + v + '"' + (d === v ? ' selected' : '') + '>' + t + '</option>';
       return '<select data-act="kdep" data-kod="' + htmlEsc(kod) + '">' +
@@ -453,13 +562,13 @@ async function kaptanListele() {
     const rolSel = (kod, r) => {
       const o = (v, t) => '<option value="' + v + '"' + (r === v ? ' selected' : '') + '>' + t + '</option>';
       return '<select data-act="krol" data-kod="' + htmlEsc(kod) + '">' +
-        o("kaptan","Kaptan") + o("depo","Depo") + '</select>';
+        o("kaptan","Kaptan") + o("depo","Depo") + o("admin","Yönetici") + '</select>';
     };
     kutu.innerHTML = list.length
       ? '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th>ROL</th><th>DEPARTMAN</th><th></th></tr></thead><tbody>' +
         list.map(k => '<tr><td><b>' + htmlEsc(k.kod) + '</b></td><td>' + htmlEsc(k.ad) + '</td>' +
           '<td>' + rolSel(k.kod, k.rol || "kaptan") + '</td>' +
-          '<td>' + (k.rol === "depo" ? '<span class="em">—</span>' : depSel(k.kod, k.departman || "hepsi")) + '</td>' +
+          '<td>' + (k.rol === "kaptan" ? depSel(k.kod, k.departman || "hepsi") : '<span class="em">—</span>') + '</td>' +
           '<td style="white-space:nowrap">' +
           '<button class="cb" style="width:auto;margin:0 6px 0 0;padding:6px 12px" data-act="ksifre" data-kod="' +
           htmlEsc(k.kod) + '">🔑 Şifre</button>' +
@@ -468,10 +577,14 @@ async function kaptanListele() {
       : '<div class="em">Henüz kullanıcı yok. Yukarıdan ekleyin.</div>';
   } catch (e) { kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata") + '</div>'; }
 }
-// Depo personeli birim seçmiyor; departman kutusu onlar için anlamsız.
+// Depo ve yönetici birim seçmiyor; departman kutusu onlar için anlamsız.
+// Yöneticide parola kuralı da farklı: sayısal PIN değil, en az 10 karakter.
 function kaptanRolFormGuncelle() {
-  const depo = document.getElementById("kRol").value === "depo";
-  document.getElementById("kDep").style.display = depo ? "none" : "";
+  const rol = document.getElementById("kRol").value;
+  document.getElementById("kDep").style.display = (rol === "kaptan") ? "" : "none";
+  const p = document.getElementById("kPin");
+  if (rol === "admin") { p.placeholder = "Parola (en az 10 karakter)"; p.maxLength = 60; p.inputMode = "text"; }
+  else { p.placeholder = "PIN (en az 6 hane)"; p.maxLength = 12; p.inputMode = "numeric"; }
 }
 
 async function kaptanEkle() {
@@ -512,19 +625,31 @@ async function kaptanDepDegistir(kod, dep) {
     if (error) throw error;
   } catch (e) { alert("Departman değiştirilemedi: " + (e.message || "hata")); await kaptanListele(); }
 }
+// Rol bazlı: yöneticiye parola, diğerlerine PIN sorulur.
 async function kaptanSifre(kod) {
-  const pin = prompt(kod + " için yeni PIN (3-12 hane):");
-  if (pin === null) return;                       // iptal
-  if (!/^[0-9]{3,12}$/.test(pin.trim())) { alert("PIN 3-12 haneli sayı olmalı."); return; }
+  const yonetici = KAPTAN_ROL.get(kod) === "admin";
+  // Kurallar sunucudakiyle AYNI olmalı: yönetici >= 10 karakter serbest metin,
+  // diğerleri 6-12 haneli sayı. (Eskiden istemci 3 haneye izin veriyordu ama
+  //  sunucu 6 istiyordu; kullanıcı sebebini anlamadan hata alıyordu.)
+  const deger = prompt(yonetici
+    ? kod + " için yeni PAROLA (en az 10 karakter):"
+    : kod + " için yeni PIN (6-12 hane):");
+  if (deger === null) return;                     // iptal
+  const yeni = yonetici ? deger : deger.trim();
+  if (yonetici) {
+    if (yeni.length < 10) { alert("Parola en az 10 karakter olmalı."); return; }
+  } else if (!/^[0-9]{6,12}$/.test(yeni)) {
+    alert("PIN 6-12 haneli sayı olmalı."); return;
+  }
   try {
-    const { error } = await SB.rpc("kaptan_pin_degistir", { ...yetkiArg(), p_kod: kod, p_pin: pin.trim() });
+    const { error } = await SB.rpc("kaptan_pin_degistir", { ...yetkiArg(), p_kod: kod, p_pin: yeni });
     if (error) throw error;
-    alert(kod + " şifresi değiştirildi.");
+    alert(kod + (yonetici ? " parolası" : " şifresi") + " değiştirildi.");
   } catch (e) { alert("Değiştirilemedi: " + (e.message || "hata")); }
 }
 
 async function kaptanSil(kod) {
-  if (!confirm(kod + " kaptanı silinsin mi?")) return;
+  if (!confirm(kod + " kullanıcısı silinsin mi?")) return;
   try {
     const { error } = await SB.rpc("kaptan_sil", { ...yetkiArg(), p_kod: kod });
     if (error) throw error;

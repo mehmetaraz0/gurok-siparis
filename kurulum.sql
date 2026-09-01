@@ -106,6 +106,7 @@ alter table public.kaptan add constraint kaptan_departman_chk check (departman i
 -- Rol: bu kişi nereye giriyor.
 --   'kaptan' -> bar/mutfak sipariş ekranı (bar.html)
 --   'depo'   -> depo toplama ekranı (depo.html)
+--   'admin'  -> liste/kullanıcı yönetimi (admin.html)
 -- Depo girişi eskiden HERKESİN kullandığı tek ortak şifreydi; sayaç kişi
 -- başına tutulamadığı için kilit de kapı başınaydı ve yabancı biri 5 yanlış
 -- denemeyle tüm depoyu 15 dakika dışarıda bırakabiliyordu (denetim N-1).
@@ -113,7 +114,7 @@ alter table public.kaptan add constraint kaptan_departman_chk check (departman i
 -- bağlanıyor ve bu kapanıyor. Yan kazanç: oturum artık KİMİN olduğunu biliyor.
 alter table public.kaptan add column if not exists rol text not null default 'kaptan';
 alter table public.kaptan drop constraint if exists kaptan_rol_chk;
-alter table public.kaptan add constraint kaptan_rol_chk check (rol in ('kaptan','depo'));
+alter table public.kaptan add constraint kaptan_rol_chk check (rol in ('kaptan','depo','admin'));
 -- Girişte hep lower(kod) eşleştiği için kod da küçük harfe sabitlenir. Aksi halde
 -- 'Maraz' + 'maraz' iki ayrı satır olur, giriş hangisine düşeceği belirsizleşir.
 update public.kaptan set kod = lower(kod) where kod <> lower(kod);
@@ -236,7 +237,28 @@ begin
     'departman', coalesce(v_dep,'hepsi'));
 end $$;
 
--- Bir KİŞİ oturumunu (kaptan ya da depo) kaptan satırına çözer.
+-- Parola kuralı role göre değişir.
+--   kaptan/depo : tablette hızlı girilsin diye 6-12 haneli sayısal PIN.
+--   admin       : yönetim yetkisi taşıdığı için serbest metin, en az 10 karakter.
+-- Sayısal PIN çevrimiçi kırılamaz (5 denemede kilit), ama admin hesabı daha
+-- geniş yetkili; orada uzun parola isteniyor.
+create or replace function public.sifre_kurali_uygun(p_rol text, p_sifre text)
+returns boolean language sql immutable as $$
+  select case when coalesce(p_rol,'kaptan') = 'admin'
+              then length(coalesce(p_sifre,'')) >= 10
+              else coalesce(p_sifre,'') ~ '^[0-9]{6,12}$'
+         end;
+$$;
+
+create or replace function public.sifre_kurali_metni(p_rol text)
+returns text language sql immutable as $$
+  select case when coalesce(p_rol,'kaptan') = 'admin'
+              then 'Yonetici parolasi en az 10 karakter olmali'
+              else 'PIN en az 6 haneli sayi olmali'
+         end;
+$$;
+
+-- Bir KİŞİ oturumunu (kaptan, depo ya da admin) kaptan satırına çözer.
 -- oturum_kaptan yalnızca tip='kaptan' bakar; depo rolündeki kişinin oturumu
 -- tip='depo' olduğu için oraya düşmez. Kendi PIN'ini değiştirme gibi
 -- "kim olduğun" yeten işlemler bunu kullanır.
@@ -247,7 +269,7 @@ begin
   select k.kod, k.ad, k.departman, k.rol into v_kod, v_ad, v_dep, v_rol
     from oturum o join kaptan k on lower(k.kod) = lower(o.ref)
    where o.token_hash = encode(extensions.digest(coalesce(p_token,''), 'sha256'), 'hex')
-     and o.son_kullanma > now() and o.tip in ('kaptan','depo') and k.aktif;
+     and o.son_kullanma > now() and o.tip in ('kaptan','depo','admin') and k.aktif;
   if v_ad is null then
     return jsonb_build_object('ok', false, 'hata', 'Oturum gecersiz veya suresi dolmus');
   end if;
@@ -261,7 +283,7 @@ end $$;
 create or replace function public.oturum_kapat_kisi(p_kod text)
 returns void language sql security definer set search_path = public as $$
   delete from oturum
-   where tip in ('kaptan','depo') and lower(coalesce(ref,'')) = lower(coalesce(p_kod,''));
+   where tip in ('kaptan','depo','admin') and lower(coalesce(ref,'')) = lower(coalesce(p_kod,''));
 $$;
 
 create or replace function public.oturum_depo(p_token text)
@@ -372,6 +394,18 @@ create or replace function public.admin_giris(p_sifre text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   delete from kaptan_deneme where zaman < now() - interval '1 day';
+  -- GEÇİŞ: ortak yönetici şifresi. Yönetici kendi kullanıcı adı + parolasına
+  -- geçtikten sonra bu kapı kapatılır:
+  --     delete from public.ayarlar where anahtar = 'admin_sifre';
+  -- Kapanana kadar '#admin' sayacı GLOBAL: yabancı biri 5 yanlış denemeyle
+  -- yönetim panelini 15 dakika kilitleyebilir. Kişisel girişte sayaç kişiye
+  -- bağlı olduğu için bu sorun yok.
+  -- DİKKAT: kapatmadan önce EN AZ İKİ admin rolünde kullanıcı olsun; parolayı
+  -- unutursanız geri dönüş yolu yalnızca doğrudan SQL olur.
+  if not exists (select 1 from ayarlar where anahtar = 'admin_sifre') then
+    return jsonb_build_object('ok', false,
+      'hata', 'Ortak yonetici sifresi kapatildi. Kullanici adi ve parola ile girin.');
+  end if;
   if kaptan_kilitli('#admin') then
     return jsonb_build_object('ok', false,
       'hata', 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.');
@@ -472,7 +506,10 @@ begin
     values ('depo_sifre', extensions.crypt(v_depo, extensions.gen_salt('bf', 10)));
   end if;
 
-  if not exists (select 1 from public.ayarlar where anahtar = 'admin_sifre') then
+  -- Depo'daki ile aynı mantık: admin rolünde kullanıcı varsa ortak şifrenin
+  -- yokluğu kasıtlıdır, betik onu geri kurmaya çalışmamalı.
+  if not exists (select 1 from public.ayarlar where anahtar = 'admin_sifre')
+     and not exists (select 1 from public.kaptan where rol = 'admin') then
     if v_admin = s_admin then
       raise exception 'KURULUM DURDU: admin sifresi hala yer tutucu (%). kurulum.sql icinde gercek bir sifre yazip tekrar calistirin.', s_admin;
     end if;
@@ -1289,7 +1326,7 @@ begin
   v_rol := coalesce(v_kimlik->>'rol', 'kaptan');
   return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_kimlik->>'ad',
     'departman', v_kimlik->>'departman', 'rol', v_rol,
-    'token', oturum_ac(case when v_rol = 'depo' then 'depo' else 'kaptan' end, v_kod));
+    'token', oturum_ac(case when v_rol in ('depo','admin') then v_rol else 'kaptan' end, v_kod));
 end $$;
 
 -- Admin: kaptan listesi (PIN yok)
@@ -1314,10 +1351,10 @@ begin
   if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_kod,'') !~ '^[A-Za-z0-9]{1,10}$' then raise exception 'Kod 1-10 harf/rakam olmali'; end if;
   if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
-  if coalesce(p_pin,'') !~ '^[0-9]{6,12}$' then raise exception 'PIN en az 6 haneli sayi olmali'; end if;
-  if v_rol not in ('kaptan','depo') then raise exception 'Gecersiz rol'; end if;
-  -- Depo personeli birim seçmiyor; departman onlar için anlamsız.
-  if v_rol = 'depo' then v_dep := 'hepsi'; end if;
+  if not sifre_kurali_uygun(v_rol, p_pin) then raise exception '%', sifre_kurali_metni(v_rol); end if;
+  if v_rol not in ('kaptan','depo','admin') then raise exception 'Gecersiz rol'; end if;
+  -- Depo ve yönetici birim seçmiyor; departman onlar için anlamsız.
+  if v_rol in ('depo','admin') then v_dep := 'hepsi'; end if;
   if v_dep not in ('bar','mutfak','hepsi') then raise exception 'Gecersiz departman'; end if;
   -- kod küçük harfe normalize edilir (giriş kasadan bağımsız çalışsın)
   insert into kaptan (kod, ad, pin, aktif, departman, rol)
@@ -1334,9 +1371,11 @@ create or replace function public.kaptan_rol(p_token text, p_kod text, p_rol tex
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
-  if coalesce(p_rol,'') not in ('kaptan','depo') then raise exception 'Gecersiz rol'; end if;
+  if coalesce(p_rol,'') not in ('kaptan','depo','admin') then raise exception 'Gecersiz rol'; end if;
+  -- Parola kuralı role göre: sayısal PIN'li biri admin yapılırsa parolası
+  -- kurala uymaz. Rolü değiştiren admin yeni parolayı ayrıca atamalı.
   update kaptan set rol = p_rol,
-                    departman = case when p_rol = 'depo' then 'hepsi' else departman end
+                    departman = case when p_rol in ('depo','admin') then 'hepsi' else departman end
    where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kullanici bulunamadi'; end if;
   -- Rol değişti: eski tipteki oturumu artık yanlış ekrana ait, kapat.
@@ -1371,7 +1410,9 @@ create or replace function public.kaptan_pin_degistir(p_token text, p_kod text, 
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
-  if coalesce(p_pin,'') !~ '^[0-9]{6,12}$' then raise exception 'PIN en az 6 haneli sayi olmali'; end if;
+  if not sifre_kurali_uygun((select rol from kaptan where lower(kod) = lower(coalesce(p_kod,''))), p_pin) then
+    raise exception '%', sifre_kurali_metni((select rol from kaptan where lower(kod) = lower(coalesce(p_kod,''))));
+  end if;
   update kaptan set pin = extensions.crypt(p_pin, extensions.gen_salt('bf', 10))
    where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kaptan bulunamadi'; end if;
@@ -1384,7 +1425,7 @@ create or replace function public.kaptan_sifre_degistir(p_token text, p_eski_pin
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_kimlik jsonb; v_kod text;
 begin
-  if coalesce(p_yeni_pin,'') !~ '^[0-9]{6,12}$' then raise exception 'Yeni PIN en az 6 haneli sayi olmali'; end if;
+  -- Kural kontrolü kimlik çözüldükten SONRA (rolü bilmemiz gerekiyor).
   -- Kimlik OTURUMDAN gelir; ek olarak eski PIN sorulur (açık oturumu ele
   -- geçiren PIN değiştirip hesabı devralamasın).
   -- oturum_kisi: kaptan VE depo oturumlarını çözer. oturum_kaptan yalnızca
@@ -1392,6 +1433,9 @@ begin
   v_kimlik := oturum_kisi(p_token);
   if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
   v_kod := v_kimlik->>'kod';
+  if not sifre_kurali_uygun(v_kimlik->>'rol', p_yeni_pin) then
+    raise exception '%', sifre_kurali_metni(v_kimlik->>'rol');
+  end if;
   if not exists (select 1 from kaptan where lower(kod) = lower(v_kod)
                   and pin = extensions.crypt(coalesce(p_eski_pin,''), pin)) then
     raise exception 'Eski PIN hatali';
