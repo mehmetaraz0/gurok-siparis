@@ -360,8 +360,8 @@ const ROL_EKRANI = {
    düğme gösterir. */
 const DEPO_IZIN = {
   depo_personel:      ["talep", "stok_gor"],
-  depo_asistan:       ["talep", "stok_gor", "envanter", "stok_yukle"],
-  depo_yonetici:      ["talep", "stok_gor", "envanter", "stok_yukle", "stok_sil"],
+  depo_asistan:       ["talep", "stok_gor", "envanter", "stok_yukle", "talep_yaz"],
+  depo_yonetici:      ["talep", "stok_gor", "envanter", "stok_yukle", "stok_sil", "talep_yaz"],
   departman_yonetici: ["stok_gor", "envanter"],
 };
 

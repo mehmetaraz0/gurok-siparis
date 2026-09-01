@@ -7,6 +7,7 @@ const { sonuc } = require("./yardimci");
 const TESTLER = [
   "./sozdizimi.test",
   "./yetki.test",
+  "./izin-aynasi.test",
   "./ortak.test",
   "./bar.test",
   "./depo-admin.test",

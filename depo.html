@@ -987,8 +987,8 @@ function cizTuketim() {
   let h = '<div class="depo-header"><span>' + htmlEsc(TUK_AKTIF) + '</span>'
         + '<span><span class="depo-count">' + Object.values(kat).reduce((n,l)=>n+l.length,0) + ' ürün</span>'
         + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:8px" onclick="tukKategoriExcel()">⬇ Excel indir</button>'
-        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(false)">📋 Depo Talep (LN)</button>'
-        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(true)">📋 Tümü (LN)</button>'
+        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(false)">💾 Depo Talebi Kaydet</button>'
+        + ' <button class="db" style="font-size:12px;padding:7px 14px;margin-left:6px" onclick="tukDepoSiparisExcel(true)">💾 Tümünü Kaydet</button>'
         + ' <button class="cb" style="font-size:12px;padding:7px 14px;margin-left:6px;width:auto;display:inline-block" onclick="tukSiparisTemizle()">🧹 Siparişleri temizle</button>'
         + ' <span id="tukSipSayac" style="font-size:12px;color:#c00000;margin-left:8px"></span></span></div>'
         + '<table class="tuk-tbl"><thead><tr><th>KOD</th><th>ÜRÜN ADI</th><th>BR</th>'
@@ -1130,26 +1130,24 @@ function tukSecilenKalemler(tumKategoriler) {
 async function tukDepoSiparisExcel(tumu) {
   const kalemler = tukSecilenKalemler(tumu);
   if (!kalemler.length) {
-    alert("Sipariş girilmemiş.\n\nÖnce SİPARİŞ sütununa miktar yazın, sonra Excel alın.");
+    alert("Sipariş girilmemiş.\n\nÖnce SİPARİŞ sütununa miktar yazın, sonra kaydedin.");
     return;
   }
   const etiket = tumu ? "TÜMÜ" : (TUK_AKTIF || "");
   const bas = document.getElementById("tukBas").value;
   const bit = document.getElementById("tukBit").value;
   try {
-    // ÖNCE kayıt: dosya inip kayıt düşmezse, LN'e aktaracak kişi hiçbir şey
-    // göremez -- eski davranışın ta kendisi. Kayıt başarısızsa indirme de
-    // yapılmıyor ki "indi ama kimse görmüyor" durumu oluşmasın.
+    // YALNIZCA KAYDEDİLİR, indirilmez: talebi yazan kişi dosyayı LN'e
+    // aktarmıyor. Dosyayı STOK sekmesindeki listeden aktaracak kişi indiriyor.
     const { data, error } = await SB.rpc("depo_talep_ekle", {
       ...yetkiArg(), p_kalemler: kalemler, p_etiket: etiket,
       p_bas: bas || null, p_bit: bit || null });
     if (error) throw error;
 
-    await talepIndir(kalemler, etiket, bas);
     await talepGetir();
-    alert("Depo talebi kaydedildi (" + (data.adet ?? kalemler.length) + " kalem).\n\n"
-        + "Dosya bilgisayarınıza indi. STOK sekmesindeki DEPO TALEPLERİ listesinden "
-        + "LN'e aktaracak kişi de indirebilir.");
+    alert("Depo talebi KAYDEDİLDİ (" + (data.adet ?? kalemler.length) + " kalem).\n\n"
+        + "STOK sekmesindeki DEPO TALEPLERİ listesinde görünüyor.\n"
+        + "LN'e aktaracak kişi oradan indirecek.");
   } catch (e) {
     console.error(e);
     alert("Talep kaydedilemedi: " + (e.message || "hata"));

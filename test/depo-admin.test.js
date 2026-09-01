@@ -139,6 +139,66 @@ console.log("=== 4c. Departman yöneticisi TALEP sorgusu ATMAZ ===");
       JSON.stringify(t.cagrilar.map(c => c.ad)));
 }
 
+console.log("=== 4d. DEPO TALEPLERİ kutusu doğru rollere görünüyor ===");
+{
+  // YAŞANAN HATA: talep_yaz izni sunucuya eklendi ama istemcideki DEPO_IZIN
+  // aynasına eklenmedi. izinli("talep_yaz") herkes için false döndü ve kutu
+  // HİÇ KİMSEYE görünmedi -- hata da vermedi, sadece yoktu.
+  const senaryolar = [
+    ["depo_personel",      false],
+    ["depo_asistan",       true],
+    ["depo_yonetici",      true],
+    ["departman_yonetici", false],
+  ];
+  for (const [rol, gorunmeli] of senaryolar) {
+    const t = depoKur({ rpc: girisYaniti(rol, "u", "Kullanici", "TKN_" + rol) });
+    t.getEl("depoKod").value = "u";
+    t.getEl("depoPin").value = "111111";
+    await t.ev("giris()");
+    const gorunur = t.getEl("talepKutu").style.display !== "none";
+    ok(rol + ": talep kutusu " + (gorunmeli ? "GÖRÜNÜYOR" : "gizli"),
+        gorunur === gorunmeli, "görünür=" + gorunur);
+    // Görünüyorsa listeyi de çekmiş olmalı (boş kutu göstermesin).
+    if (gorunmeli) {
+      t.cagrilar.length = 0;
+      await t.ev('sekmeGec("stok")');
+      ok(rol + ": talep listesi çekildi",
+          t.cagrilar.some(c => c.ad === "depo_talep_liste"),
+          JSON.stringify(t.cagrilar.map(c => c.ad)));
+    }
+  }
+}
+
+console.log("=== 4e. Talep KAYDEDİLİR, indirilmez ===");
+{
+  // Yazan kişi dosyayı LN'e aktarmıyor; indirmesine gerek yok. Dosyayı
+  // listeden aktaracak kişi indiriyor.
+  const t = depoKur({ rpc: ad => ad === "kaptan_giris"
+    ? { data: { ok: true, kod: "dy", ad: "Depo Yoneticisi", departman: "hepsi",
+                rol: "depo_yonetici", token: "TKN_Y" }, error: null }
+    : { data: { ok: true, adet: 2 }, error: null } });
+  t.getEl("depoKod").value = "dy";
+  t.getEl("depoPin").value = "111111";
+  await t.ev("giris()");
+  // Tüketim ekranında sipariş yazılmış gibi davran
+  t.ev('TUKETIM = { kategoriler: { "Alkolsüz İçecekler": { _: [' +
+      '{ kod: "ICA02000001", ad: "KOLA", birim: "kol" } ] } } }');
+  t.ev('TUK_AKTIF = "Alkolsüz İçecekler"');
+  t.ev('TUK_SIPARIS = { ICA02000001: 12 }');
+  t.cagrilar.length = 0;
+  await t.ev("tukDepoSiparisExcel(false)");
+  ok("kayıt RPC'si çağrıldı",
+      t.cagrilar.some(c => c.ad === "depo_talep_ekle"),
+      JSON.stringify(t.cagrilar.map(c => c.ad)));
+  const c = t.cagrilar.find(x => x.ad === "depo_talep_ekle");
+  ok("miktar doğru gitti", !!c && c.arg.p_kalemler[0].m === 12);
+  ok("liste tazelendi", t.cagrilar.some(x => x.ad === "depo_talep_liste"));
+  ok("kullanıcıya KAYDEDİLDİ denildi",
+      t.uyarilar.some(u => /KAYDED/i.test(u)), JSON.stringify(t.uyarilar));
+  ok("indirme yapılmadı (dosya üretilmedi)",
+      !t.uyarilar.some(u => /indi/i.test(u)), JSON.stringify(t.uyarilar));
+}
+
 console.log("=== 5. Yenileme / süre / çıkış ===");
 {
   const t = depoKur({ oturum: [["gurok_depo_token", "TKN_R"], ["gurok_depo_zaman", TAZE()],
