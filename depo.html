@@ -141,6 +141,16 @@
         </div>
       </div>
 
+      <!-- Depo talebi ORTAK KAYIT: yazan indirsin diye değil, LN'e aktaracak
+           kişi de görsün diye. Kim yazdı, kim aktardı burada duruyor. -->
+      <div id="talepKutu">
+        <div class="depo-header">
+          <span>DEPO TALEPLERİ — LN'e aktarılacak sipariş dosyaları</span>
+          <span class="depo-count" id="talepCount">—</span>
+        </div>
+        <div id="talepIcerik"><div class="em">Yükleniyor...</div></div>
+      </div>
+
       <div id="yuklemeGecmisi">
         <div class="depo-header">
           <span>YÜKLEME GEÇMİŞİ — aynı içerik ikinci kez uygulanamaz</span>
@@ -389,6 +399,7 @@ function yetkileriUygula() {
   // Stok sekmesi içi: yükleme ve silme ayrı izinler
   g("stokYukleKutu", izinli("stok_yukle"));
   g("yuklemeGecmisi", izinli("stok_yukle"));
+  g("talepKutu", izinli("talep_yaz"));
   g("stokSilKutu",   izinli("stok_sil"));
   sekmeGec(izinli("talep") ? "talep" : (izinli("envanter") ? "env" : "stok"));
 }
@@ -410,6 +421,7 @@ function sekmeGec(hangi) {
   if (hangi === "stok" && !STOK     && izinli("stok_gor")) {
     stokGetir();
     if (izinli("stok_yukle")) yuklemeGetir();
+    if (izinli("talep_yaz"))  talepGetir();
   }
 }
 
@@ -1121,19 +1133,40 @@ async function tukDepoSiparisExcel(tumu) {
     alert("Sipariş girilmemiş.\n\nÖnce SİPARİŞ sütununa miktar yazın, sonra Excel alın.");
     return;
   }
+  const etiket = tumu ? "TÜMÜ" : (TUK_AKTIF || "");
+  const bas = document.getElementById("tukBas").value;
+  const bit = document.getElementById("tukBit").value;
   try {
-    const blob = await buildDepoSiparisBlob(kalemler);
-    const bas = document.getElementById("tukBas").value;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "depo_talep_" + (tumu ? "TUMU" : TUK_AKTIF.replace(/[^a-zA-Z0-9]+/g, "_")) + "_" + bas + ".xlsx";
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
+    // ÖNCE kayıt: dosya inip kayıt düşmezse, LN'e aktaracak kişi hiçbir şey
+    // göremez -- eski davranışın ta kendisi. Kayıt başarısızsa indirme de
+    // yapılmıyor ki "indi ama kimse görmüyor" durumu oluşmasın.
+    const { data, error } = await SB.rpc("depo_talep_ekle", {
+      ...yetkiArg(), p_kalemler: kalemler, p_etiket: etiket,
+      p_bas: bas || null, p_bit: bit || null });
+    if (error) throw error;
+
+    await talepIndir(kalemler, etiket, bas);
+    await talepGetir();
+    alert("Depo talebi kaydedildi (" + (data.adet ?? kalemler.length) + " kalem).\n\n"
+        + "Dosya bilgisayarınıza indi. STOK sekmesindeki DEPO TALEPLERİ listesinden "
+        + "LN'e aktaracak kişi de indirebilir.");
   } catch (e) {
     console.error(e);
-    alert("Excel üretilemedi: " + (e.message || "hata"));
+    alert("Talep kaydedilemedi: " + (e.message || "hata"));
   }
+}
+
+// Kalem listesinden LN dosyasını üretip indirir. Hem yeni talepte hem de
+// kayıtlı talebi yeniden indirirken kullanılıyor -- ikisi AYNI dosyayı versin.
+async function talepIndir(kalemler, etiket, tarih) {
+  const blob = await buildDepoSiparisBlob(kalemler);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "depo_talep_" + String(etiket || "").replace(/[^a-zA-Z0-9]+/g, "_")
+             + "_" + (tarih || "") + ".xlsx";
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function tuketimSekmeGec(kat) { TUK_AKTIF = kat; cizTuketim(); }
@@ -1322,6 +1355,86 @@ async function stokDosyaSecildi() {
     console.error(e);
     onizle.innerHTML = '<span class="hata">Okuma hatası: ' + htmlEsc(e.message || "") + '</span>';
   }
+}
+
+/* ---------- Depo talepleri (ortak kayıt) ---------- */
+let TALEPLER = [];
+
+async function talepGetir() {
+  const kutu = document.getElementById("talepIcerik");
+  try {
+    const { data, error } = await SB.rpc("depo_talep_liste", { ...yetkiArg(), p_adet: 30 });
+    if (error) throw error;
+    TALEPLER = data || [];
+    cizTalep();
+  } catch (e) {
+    kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata") + '</div>';
+  }
+}
+
+function cizTalep() {
+  const kutu = document.getElementById("talepIcerik");
+  const bekleyen = TALEPLER.filter(t => !t.aktarildi).length;
+  document.getElementById("talepCount").textContent =
+    TALEPLER.length + " talep · " + bekleyen + " aktarılmayı bekliyor";
+  if (!TALEPLER.length) {
+    kutu.innerHTML = '<div class="em">Henüz talep yok. TÜKETİM sekmesinde SİPARİŞ sütununa '
+      + 'miktar yazıp "📋 Depo Talep (LN)" ile oluşturun.</div>';
+    return;
+  }
+  kutu.innerHTML = '<table class="adm-tbl"><thead><tr>'
+    + '<th>TARİH</th><th>KAPSAM</th><th>KALEM</th><th>YAZAN</th><th>DURUM</th><th></th>'
+    + '</tr></thead><tbody>'
+    + TALEPLER.map((t, i) => {
+        const z = new Date(t.olusturma).toLocaleString("tr-TR");
+        return '<tr' + (t.aktarildi ? '' : ' style="background:#fffbe6"') + '>'
+          + '<td>' + htmlEsc(z) + '</td>'
+          + '<td>' + htmlEsc(t.etiket || "—") + '</td>'
+          + '<td style="text-align:right">' + t.kalem_sayisi + '</td>'
+          + '<td>' + htmlEsc(t.olusturan || "") + '</td>'
+          + '<td>' + (t.aktarildi
+                ? '<span class="rz onay">✓ aktardı: ' + htmlEsc(t.aktaran || "") + '</span>'
+                : '<span class="rz">⏳ bekliyor</span>') + '</td>'
+          + '<td style="white-space:nowrap">'
+          + '<button class="cb" style="width:auto;margin:0 4px 0 0;padding:5px 10px" data-act="tind" data-i="' + i + '">⬇ İndir</button>'
+          + '<button class="cb" style="width:auto;margin:0 4px 0 0;padding:5px 10px" data-act="takt" data-i="' + i + '">'
+          + (t.aktarildi ? "↩ geri al" : "✓ aktardım") + '</button>'
+          + '<button class="cb" style="width:auto;margin:0;padding:5px 10px" data-act="tsil" data-i="' + i + '">🗑</button>'
+          + '</td></tr>';
+      }).join("") + '</tbody></table>';
+}
+
+async function talepYenidenIndir(i) {
+  const t = TALEPLER[i];
+  if (!t) return;
+  try {
+    await talepIndir(t.kalemler, t.etiket, t.bas || "");
+  } catch (e) { alert("İndirilemedi: " + (e.message || "hata")); }
+}
+
+async function talepAktarildi(i) {
+  const t = TALEPLER[i];
+  if (!t) return;
+  if (!t.aktarildi && !confirm("Bu talep LN'e aktarıldı olarak işaretlenecek.\n\n"
+      + "Adınız kayda yazılacak. Devam edilsin mi?")) return;
+  try {
+    const { error } = await SB.rpc("depo_talep_aktarildi", {
+      ...yetkiArg(), p_id: t.id, p_aktarildi: !t.aktarildi });
+    if (error) throw error;
+    await talepGetir();
+  } catch (e) { alert("İşaretlenemedi: " + (e.message || "hata")); }
+}
+
+async function talepSil(i) {
+  const t = TALEPLER[i];
+  if (!t) return;
+  if (!confirm("Bu talep kaydı silinecek" + (t.aktarildi ? " (LN'e aktarılmış görünüyor)" : "")
+      + ".\n\nEmin misiniz?")) return;
+  try {
+    const { error } = await SB.rpc("depo_talep_sil", { ...yetkiArg(), p_id: t.id });
+    if (error) throw error;
+    await talepGetir();
+  } catch (e) { alert("Silinemedi: " + (e.message || "hata")); }
 }
 
 /* ---------- Günlük LN mutabakatı ---------- */
@@ -1658,6 +1771,16 @@ function cizYukleme() {
 document.getElementById("yuklemeIcerik").addEventListener("click", e => {
   const btn = e.target.closest(".yuk-geri-btn");
   if (btn && btn.dataset.id) yuklemeGeriAl(btn.dataset.id);
+});
+
+// Depo talebi listesi: indir / aktarıldı işaretle / sil.
+document.getElementById("talepIcerik").addEventListener("click", e => {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const i = Number(btn.dataset.i);
+  if (btn.dataset.act === "tind")      talepYenidenIndir(i);
+  else if (btn.dataset.act === "takt") talepAktarildi(i);
+  else if (btn.dataset.act === "tsil") talepSil(i);
 });
 
 async function yuklemeGeriAl(id) {

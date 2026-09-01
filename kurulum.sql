@@ -255,6 +255,7 @@ end $$;
      stok_gor   : stok listesini görüntülemek
      envanter   : kalem envanteri + tüketim (AYNI veri, aynı RPC)
      stok_yukle : baseline / mal kabul yüklemek, yükleme geçmişi
+     talep_yaz  : depo talebi (LN sipariş dosyası) yazmak ve aktarıldı işaretlemek
      stok_sil   : yükleme geri alma, katalog dışını temizleme, tüm stoğu silme */
 create or replace function public.depo_yetki(p_rol text, p_izin text)
 returns boolean language sql immutable as $$
@@ -263,6 +264,9 @@ returns boolean language sql immutable as $$
     when 'stok_gor'   then p_rol in ('depo_personel','depo_asistan','depo_yonetici','departman_yonetici')
     when 'envanter'   then p_rol in ('depo_asistan','depo_yonetici','departman_yonetici')
     when 'stok_yukle' then p_rol in ('depo_asistan','depo_yonetici')
+    -- Depo talebi yazmak/görmek/aktarıldı işaretlemek. Departman yöneticisi
+    -- SALT OKUNUR olduğu için dışarıda; personel bu işi yapmıyor.
+    when 'talep_yaz'  then p_rol in ('depo_asistan','depo_yonetici')
     when 'stok_sil'   then p_rol in ('depo_yonetici')
     else false
   end;
@@ -1300,6 +1304,114 @@ begin
   return jsonb_build_object('ok', true, 'adet', v_adet, 'toplam', v_toplam,
                            'zorlandi', v_mukerrer, 'kesim_mi', coalesce(p_kesim,false));
 end $$;
+
+-- ================= DEPO TALEBİ (LN sipariş dosyası) =================
+-- Tüketim ekranında SİPARİŞ sütununa yazılan miktarlardan LN'in tdpur
+-- şablonunda bir sipariş dosyası üretiliyor. Eskiden bu dosya yalnızca
+-- ÜRETENİN bilgisayarına iniyordu: kaydı kalmıyordu ve LN'e aktaracak kişi
+-- ancak dosya kendisine ELDEN ulaştırılırsa görebiliyordu.
+--
+-- Artık talep ORTAK BİR KAYIT: kim yazdı, ne zaman, hangi kalemler, LN'e
+-- aktarıldı mı, kim aktardı. Dosya kayıttan yeniden üretilebiliyor (kalemler
+-- saklanıyor, dosyanın kendisi değil -- şablon değişirse yeni şablonla üretilir).
+create table if not exists public.depo_talep (
+  id            uuid primary key default gen_random_uuid(),
+  etiket        text not null default '',        -- kategori adı ya da 'TÜMÜ'
+  bas           date,                            -- tüketim aralığı (bilgi amaçlı)
+  bit           date,
+  kalemler      jsonb not null default '[]'::jsonb,
+  olusturan     text not null,
+  olusturma     timestamptz not null default now(),
+  aktarildi     boolean not null default false,
+  aktaran       text,
+  aktarma_saati timestamptz
+);
+create index if not exists depo_talep_zaman_idx on public.depo_talep (olusturma desc);
+alter table public.depo_talep enable row level security;
+revoke all on public.depo_talep from anon, authenticated;
+
+create or replace function public.depo_talep_ekle(
+  p_token text, p_kalemler jsonb, p_etiket text default '',
+  p_bas date default null, p_bit date default null)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_izin jsonb; v_kalemler jsonb; v_id uuid;
+begin
+  v_izin := depo_izin(p_token, 'talep_yaz');
+  if jsonb_typeof(p_kalemler) <> 'array' then raise exception 'Gecersiz veri'; end if;
+
+  -- Yalnızca geçerli kod + pozitif miktar. Aynı kod iki kez gelirse toplanır
+  -- (talep bir SİPARİŞ; baseline gibi anlık görüntü değil).
+  with ham as (
+    select el->>'k' kod, left(el->>'a',120) ad, left(coalesce(el->>'b','ad'),20) birim,
+           (el->>'m')::numeric miktar
+      from jsonb_array_elements(p_kalemler) el
+     where el->>'k' ~ '^[A-Z]{3}[0-9]{8}$'
+       and (el->>'m') ~ '^[0-9]+(\.[0-9]+)?$' and (el->>'m')::numeric > 0),
+  -- Gruplama AYRI katmanda: jsonb_agg içinde max()/sum() iç içe aggregate olur.
+  veri as (select kod, max(ad) ad, max(birim) birim, sum(miktar) miktar
+             from ham group by kod)
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'k', kod, 'a', ad, 'b', birim, 'm', miktar) order by kod), '[]'::jsonb)
+    into v_kalemler
+    from veri;
+
+  if jsonb_array_length(v_kalemler) = 0 then raise exception 'Talepte gecerli kalem yok'; end if;
+
+  insert into depo_talep (etiket, bas, bit, kalemler, olusturan)
+  values (left(coalesce(p_etiket,''),60), p_bas, p_bit, v_kalemler, v_izin->>'rol')
+  returning id into v_id;
+  -- olusturan alanına KİM yazdıysa o gelsin (rol değil).
+  update depo_talep set olusturan = coalesce(
+    (select k.ad from oturum o join kaptan k on lower(k.kod) = lower(o.ref)
+      where o.token_hash = encode(extensions.digest(coalesce(p_token,''),'sha256'),'hex')),
+    v_izin->>'rol') where id = v_id;
+
+  return jsonb_build_object('ok', true, 'id', v_id,
+                           'adet', jsonb_array_length(v_kalemler));
+end $$;
+
+create or replace function public.depo_talep_liste(p_token text, p_adet int default 30)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform depo_izin(p_token, 'talep_yaz');
+  return coalesce((select jsonb_agg(jsonb_build_object(
+           'id', id, 'etiket', etiket, 'bas', bas, 'bit', bit,
+           'kalem_sayisi', jsonb_array_length(kalemler),
+           'toplam', (select sum((el->>'m')::numeric) from jsonb_array_elements(kalemler) el),
+           'olusturan', olusturan, 'olusturma', olusturma,
+           'aktarildi', aktarildi, 'aktaran', aktaran, 'aktarma_saati', aktarma_saati,
+           'kalemler', kalemler) order by olusturma desc, id desc)
+    from (select * from depo_talep order by olusturma desc, id desc
+           limit greatest(1, least(coalesce(p_adet,30), 200))) t), '[]'::jsonb);
+end $$;
+
+-- LN'e aktarıldı işareti: kim aktardıysa adı kalır. Yanlışlıkla işaretlenirse
+-- geri alınabilir (p_aktarildi = false).
+create or replace function public.depo_talep_aktarildi(
+  p_token text, p_id uuid, p_aktarildi boolean default true)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_ad text;
+begin
+  perform depo_izin(p_token, 'talep_yaz');
+  select k.ad into v_ad from oturum o join kaptan k on lower(k.kod) = lower(o.ref)
+   where o.token_hash = encode(extensions.digest(coalesce(p_token,''),'sha256'),'hex');
+  update depo_talep
+     set aktarildi = coalesce(p_aktarildi, true),
+         aktaran = case when coalesce(p_aktarildi,true) then v_ad else null end,
+         aktarma_saati = case when coalesce(p_aktarildi,true) then now() else null end
+   where id = p_id;
+  if not found then raise exception 'Talep bulunamadi'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
+create or replace function public.depo_talep_sil(p_token text, p_id uuid)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform depo_izin(p_token, 'talep_yaz');
+  delete from depo_talep where id = p_id;
+  if not found then raise exception 'Talep bulunamadi'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
 -- Yalnızca EN YENİ geçerli yükleme geri alınabilir: daha yeni bir yükleme
 -- araya girmişse eski kaydın "önceki değer"leri artık doğru değildir.
 create or replace function public.stok_yukleme_geri_al(p_token text, p_id uuid)
@@ -1846,6 +1958,10 @@ grant execute on function public.depo_durum_degistir(text, text, text)          
 grant execute on function public.onay_stok_kontrol(text, text)                        to anon;
 grant execute on function public.stok_baseline(text, jsonb, boolean)                  to anon;
 grant execute on function public.stok_malkabul(text, jsonb, boolean)                  to anon;
+grant execute on function public.depo_talep_ekle(text, jsonb, text, date, date)        to anon;
+grant execute on function public.depo_talep_liste(text, int)                           to anon;
+grant execute on function public.depo_talep_aktarildi(text, uuid, boolean)             to anon;
+grant execute on function public.depo_talep_sil(text, uuid)                            to anon;
 grant execute on function public.stok_mutabakat(text, jsonb, boolean, boolean)         to anon;
 grant execute on function public.stok_mutabakat_onizle(text, jsonb, boolean)           to anon;
 grant execute on function public.stok_yukleme_liste(text, int)                        to anon;

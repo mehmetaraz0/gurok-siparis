@@ -568,6 +568,99 @@ raise notice '--- yetki: personel mutabakat yapamaz ---';
   perform pg_temp.bekle('depo personeli mutabakat UYGULAYAMAZ', v_red);
   delete from kaptan_deneme; delete from siparisler; delete from stok;
   delete from stok_yukleme; delete from ayarlar where anahtar = 'son_kesim';
+raise notice '=== 15. DEPO TALEBI (ortak kayit) ===';
+  delete from kaptan_deneme; delete from depo_talep;
+  -- 11. testte 'da' personele dusurulmustu; burada asistan olmasi gerekiyor
+  -- (senaryo: YONETICI yazar, ASISTAN LN'e aktarir).
+  -- 13. test ortak yonetici sifresini kapatti; KISISEL hesapla giriliyor.
+  r := kaptan_giris('yon2', 'BaskaParola2026!');
+  perform kaptan_rol(r->>'token', 'da', 'depo_asistan');
+  delete from kaptan_deneme;
+  r := kaptan_giris('dy', '999999');   -- depo yoneticisi yazar
+  v_token := r->>'token';
+
+  r := depo_talep_ekle(v_token,
+    '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":10},
+      {"k":"ICB01000005","a":"BIRA FICI","b":"fic","m":4}]'::jsonb,
+    'ICECEK', current_date, current_date);
+  perform pg_temp.bekle('talep kaydedildi', (r->>'ok')::boolean);
+  perform pg_temp.bekle('2 kalem', (r->>'adet')::int = 2);
+  perform pg_temp.bekle('YAZAN adiyla kaydedildi',
+    (select olusturan from depo_talep limit 1) = 'Depo Yoneticisi');
+
+raise notice '--- ASIL MESELE: baskasi da goruyor ---';
+  delete from kaptan_deneme;
+  r := kaptan_giris('da', '222222');   -- asistan LN-e aktaracak
+  v_token2 := r->>'token';
+  r := depo_talep_liste(v_token2, 30);
+  perform pg_temp.bekle('asistan talebi GORUYOR', jsonb_array_length(r) = 1);
+  perform pg_temp.bekle('kalemler de geliyor (dosya yeniden uretilebilsin)',
+    jsonb_array_length(r->0->'kalemler') = 2);
+  perform pg_temp.bekle('bekliyor durumunda', (r->0->>'aktarildi')::boolean is false);
+
+raise notice '--- aktarildi isareti KIMIN yaptigini tutuyor ---';
+  perform depo_talep_aktarildi(v_token2, (r->0->>'id')::uuid, true);
+  r := depo_talep_liste(v_token2, 30);
+  perform pg_temp.bekle('aktarildi', (r->0->>'aktarildi')::boolean);
+  perform pg_temp.bekle('aktaran ASISTAN', r->0->>'aktaran' = 'Depo Asistani');
+  perform pg_temp.bekle('yazan hala YONETICI', r->0->>'olusturan' = 'Depo Yoneticisi');
+
+  -- Yanlislikla isaretlendiyse geri alinabilmeli.
+  perform depo_talep_aktarildi(v_token2, (r->0->>'id')::uuid, false);
+  r := depo_talep_liste(v_token2, 30);
+  perform pg_temp.bekle('geri alinabiliyor', (r->0->>'aktarildi')::boolean is false);
+  perform pg_temp.bekle('aktaran temizlendi', r->0->>'aktaran' is null);
+
+raise notice '--- gecersiz kalemler eleniyor ---';
+  -- Onceki kaydi temizle: ayni transactionda olusturma damgalari esit
+  -- oldugu icin "en yeni" belirsizlesir (uretimde ayri transactionlar).
+  delete from depo_talep;
+  r := depo_talep_ekle(v_token,
+    '[{"k":"ICA02000001","a":"KOLA","b":"kol","m":5},
+      {"k":"BOZUKKOD","a":"X","b":"ad","m":9},
+      {"k":"ICA02000002","a":"Y","b":"ad","m":0},
+      {"k":"ICA02000001","a":"KOLA","b":"kol","m":3}]'::jsonb, 'TEST');
+  perform pg_temp.bekle('bozuk kod ve sifir miktar elendi', (r->>'adet')::int = 1);
+  r := depo_talep_liste(v_token, 1);
+  perform pg_temp.bekle('ayni kod TOPLANDI (5+3=8)',
+    (r->0->'kalemler'->0->>'m')::numeric = 8);
+
+  v_red := false;
+  begin perform depo_talep_ekle(v_token, '[]'::jsonb, 'BOS');
+  exception when others then v_red := true; end;
+  perform pg_temp.bekle('bos talep reddedildi', v_red);
+
+raise notice '--- yetki: personel ve departman yoneticisi ---';
+  delete from kaptan_deneme;
+  r := kaptan_giris('dp', '111111');
+  v_red := false;
+  begin perform depo_talep_liste(r->>'token', 30);
+  exception when others then v_red := (sqlerrm like '%yetkiniz yok%'); end;
+  perform pg_temp.bekle('depo personeli talepleri GOREMIYOR', v_red);
+  v_red := false;
+  begin perform depo_talep_ekle(r->>'token',
+    '[{"k":"ICA02000001","a":"K","b":"kol","m":1}]'::jsonb, 'X');
+  exception when others then v_red := (sqlerrm like '%yetkiniz yok%'); end;
+  perform pg_temp.bekle('depo personeli talep YAZAMIYOR', v_red);
+
+  delete from kaptan_deneme;
+  r := kaptan_giris('dybar', '555555');   -- departman yoneticisi: SALT OKUNUR
+  v_red := false;
+  begin perform depo_talep_ekle(r->>'token',
+    '[{"k":"ICA02000001","a":"K","b":"kol","m":1}]'::jsonb, 'X');
+  exception when others then v_red := (sqlerrm like '%yetkiniz yok%'); end;
+  perform pg_temp.bekle('departman yoneticisi talep YAZAMIYOR', v_red);
+
+raise notice '--- silme ---';
+  delete from kaptan_deneme;
+  r := kaptan_giris('dy', '999999');
+  v_token := r->>'token';
+  r := depo_talep_liste(v_token, 30);
+  n := jsonb_array_length(r);
+  perform depo_talep_sil(v_token, (r->0->>'id')::uuid);
+  perform pg_temp.bekle('talep silindi',
+    jsonb_array_length(depo_talep_liste(v_token, 30)) = n - 1);
+  delete from depo_talep; delete from kaptan_deneme;
   raise notice '';
   raise notice 'TUM SUNUCU TESTLERI GECTI';
 end $t$;
