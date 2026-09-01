@@ -189,47 +189,20 @@ console.log("=== 8. Yönetici kendi parolasını değiştirir ===");
   ok("uyarı verildi", t.uyarilar.some(u => /en az 10 karakter/.test(u)));
 }
 
-console.log("=== 9. GEÇİŞ: ortak yönetici şifresi ===");
+console.log("=== 9. Ortak şifre yolu KODDAN KALDIRILDI ===");
 {
-  const t = adminKur({ rpc: ad => ad === "admin_giris"
-    ? { data: { ok: true, token: "TKN_S" }, error: null } : { data: [], error: null } });
-  t.getEl("sifre").value = "cokGizliSifre";
-  await t.ev("ortakSifreGiris()");
-  ok("giriş yapıldı", t.ev("GIRISLI") === true && t.ev("TOKEN") === "TKN_S");
-  ok("kimlik YOK (ortak şifrede kim olduğu bilinmiyor)", t.ev("YONETICI") === null);
-  ok("parola değiştir düğmesi gizli", t.getEl("parolaBtn").style.display === "none");
-  ok("şifre hiçbir yere yazılmadı",
-      !Array.from(t.ss._map.values()).some(v => String(v).indexOf("cokGizliSifre") >= 0));
-}
-{
-  const t = adminKur({ rpc: () => ({ data: { ok: false, hata: "Sifre hatali" }, error: null }) });
-  t.getEl("sifre").value = "yanlis";
-  await t.ev("ortakSifreGiris()");
-  ok("yanlış şifre reddedildi", t.ev("GIRISLI") === false);
-  ok("hata gösterildi", /Şifre hatalı/.test(t.getEl("hata").textContent));
-  // N-2: eski p_sifre yolu silindi; ikinci bir deneme OLMAMALI.
-  ok("eski şifre yoluna düşmedi (tek RPC)", t.cagrilar.length === 1);
-}
-{
-  const t = adminKur({ rpc: () => ({ data: { ok: false,
-    hata: "Ortak yonetici sifresi kapatildi. Kullanici adi ve parola ile girin." }, error: null }) });
-  t.getEl("sifre").value = "eskisifre";
-  await t.ev("ortakSifreGiris()");
-  ok("kapatılmış kapı mesajı kullanıcıya ulaşıyor",
-      /kapatıldı/i.test(t.getEl("hata").textContent), t.getEl("hata").textContent);
-}
-{
-  // Başlangıç durumu HTML özniteliğinde; sahte DOM öznitelik okumaz.
+  // Sunucudaki satır 1 Eyl 2026'da silindi; istemcide de ölü kod kalmasın.
   const html = fs.readFileSync(path.join(KOK, "admin.html"), "utf8");
-  ok("başlangıçta kişisel giriş açık",
-      /id="ortakGiris"[^>]*style="display:none"/.test(html));
-  const t = adminKur({});
-  t.ev("ortakSifreGoster(true)");
-  ok("ortak şifre kutusu açıldı",
-      t.getEl("kisiGiris").style.display === "none" && t.getEl("ortakGiris").style.display === "");
-  t.ev("ortakSifreGoster(false)");
-  ok("kişisel girişe dönüldü",
-      t.getEl("kisiGiris").style.display === "" && t.getEl("ortakGiris").style.display === "none");
+  ok("ortak şifre kutusu yok", !/id="sifre"/.test(html));
+  ok("ortakSifreGiris() yok", html.indexOf("ortakSifreGiris") < 0);
+  ok("admin_giris RPC'si çağrılmıyor", html.indexOf("admin_giris") < 0);
+  ok("kullanıcı adı ve parola kutuları var",
+      /id="admKod"/.test(html) && /id="admParola"/.test(html));
+
+  // Ortak şifreli giriş yardımcısı da artık hiçbir yerde kullanılmıyor:
+  // N-2'nin dersi, kullanılmayan kimlik yolunu bırakmamaktı.
+  const ortak = fs.readFileSync(path.join(KOK, "ortak.js"), "utf8");
+  ok("sifreIleGiris() ortak.js'ten de silindi", ortak.indexOf("async function sifreIleGiris") < 0);
 }
 
 console.log("=== 10. Yenileme / süre / çıkış ===");

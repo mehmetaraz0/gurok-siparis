@@ -208,39 +208,24 @@ function kaptanArg() {
 }
 
 /* Sunucu mesajları ASCII geliyor (kurulum.sql'de Türkçe karakter yok).
-   Bilinen mesajları tanıyıp düzgün Türkçe yazar.
+   Ekrana düzgün Türkçe yazar.
 
-   TANIMA AÇIK LİSTEDİR: bilinmeyen sunucu metnini olduğu gibi ekrana basmıyoruz
-   (gereksiz bilgi sızdırabilir), genel "şifre hatalı" mesajına düşüyoruz. Ama
-   kullanıcının EYLEM almasını gerektiren mesajlar (kilit, kapatılmış kapı)
-   yutulmamalı — eskiden yutuluyordu ve kullanıcı ne olduğunu anlamıyordu. */
+   TANIMA AÇIK LİSTEDİR: bilinmeyen sunucu metnini olduğu gibi basmıyoruz
+   (gereksiz bilgi sızdırabilir), genel mesaja düşüyoruz. Ama kullanıcının
+   EYLEM almasını gerektiren kilit mesajı yutulmamalı — eskiden yutuluyordu
+   ve kullanıcı neden giremediğini anlamıyordu. */
 function girisHatasiTr(h, varsayilan) {
-  h = String(h || "");
-  if (/cok fazla/i.test(h))
+  if (/cok fazla/i.test(String(h || "")))
     return "Çok fazla hatalı deneme. 15 dakika sonra tekrar deneyin.";
-  if (/ortak depo sifresi kapatildi/i.test(h))
-    return "Ortak depo şifresi kapatıldı. Kullanıcı adı ve PIN ile girin.";
-  if (/ortak yonetici sifresi kapatildi/i.test(h))
-    return "Ortak yönetici şifresi kapatıldı. Kullanıcı adı ve parola ile girin.";
   return varsayilan || "Şifre hatalı.";
 }
 
-// Şifreyle giriş (depo/admin). girisRpc: "depo_giris" | "admin_giris"
-// Dönüş: { ok, hata }
-async function sifreIleGiris(girisRpc, sifre) {
-  try {
-    const { data, error } = await SB.rpc(girisRpc, { p_sifre: sifre });
-    if (error) return { ok: false, hata: "Bağlantı kurulamadı." };
-    if (data && data.ok && data.token) { TOKEN = data.token; return { ok: true }; }
-    return { ok: false, hata: girisHatasiTr(data && data.hata) };
-  } catch (e) { return { ok: false, hata: "Bağlantı kurulamadı." }; }
-}
+/* Kullanıcı adı + PIN/parola ile giriş. ÜÇ ekran da (bar, depo, yönetim)
+   AYNI kapıyı kullanır (kaptan_giris): kapı sayısı arttıkça deneme sayacını
+   doğru beslemeyi unutma riski artıyor — H-2'nin dersi buydu. Ortak şifreli
+   girişler (depo_giris / admin_giris) 1 Eyl 2026'da kapatıldı.
 
-/* Kullanıcı adı + PIN ile giriş. Bar ve depo ekranları AYNI kapıyı kullanır
-   (kaptan_giris): kapı sayısı arttıkça deneme sayacını doğru beslemeyi
-   unutma riski artıyor — H-2'nin dersi buydu.
-
-   beklenenRol: bu ekranın kabul ettiği rol ("kaptan" | "depo"). Sunucu
+   beklenenRol: bu ekranın kabul ettiği rol ("kaptan" | "depo" | "admin"). Sunucu
    oturumu role göre açtığı için yanlış ekrana giren kişi zaten hiçbir şey
    yapamaz; ama "giriş oldu" görünüp sonra her işlemin sessizce reddedilmesi
    kötü bir deneyim. Burada açıkça söylüyoruz.

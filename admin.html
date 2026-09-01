@@ -16,28 +16,15 @@
 <div class="kilit" id="kilit">
   <h2>🛠 LİSTE YÖNETİMİ</h2>
 
-  <!-- Kişisel giriş: sayaç kişi başına tutulduğu için biri yanlış deneme
-       yaparak diğerlerini kilitleyemez (denetim N-1). -->
-  <div id="kisiGiris">
-    <p>Kullanıcı adınız ve parolanız ile girin</p>
-    <input type="text" id="admKod" placeholder="Kullanıcı adı"
-           autocomplete="username" autocapitalize="none" spellcheck="false">
-    <input type="password" id="admParola" placeholder="Parola"
-           autocomplete="current-password">
-    <button id="girisBtn" onclick="giris()">Giriş</button>
-    <button class="cb" onclick="ortakSifreGoster(true)">Ortak şifre ile gir</button>
-  </div>
-
-  <!-- GEÇİŞ: herkesin bildiği tek şifre. Yönetici hesabı açmak için yönetici
-       yetkisi gerektiğinden bu kapı, ilk hesaplar açılana kadar ZORUNLU.
-       Kapatmak (en az iki yönetici hesabı açtıktan sonra):
-         delete from public.ayarlar where anahtar = 'admin_sifre'; -->
-  <div id="ortakGiris" style="display:none">
-    <p>Ortak yönetici şifresi<br><small>geçici — kişisel hesaba geçilince kapatılacak</small></p>
-    <input type="password" id="sifre" placeholder="Şifre" autocomplete="current-password">
-    <button id="ortakBtn" onclick="ortakSifreGiris()">Giriş</button>
-    <button class="cb" onclick="ortakSifreGoster(false)">← Kullanıcı adı ile gir</button>
-  </div>
+  <!-- Herkesin bildiği ortak şifre 1 Eyl 2026'da kapatıldı (denetim N-1):
+       sayaç kapı başına tutulduğu için yabancı biri 5 yanlış denemeyle
+       yönetim panelini 15 dakika kilitleyebiliyordu. Artık sayaç kişiye bağlı. -->
+  <p>Kullanıcı adınız ve parolanız ile girin</p>
+  <input type="text" id="admKod" placeholder="Kullanıcı adı"
+         autocomplete="username" autocapitalize="none" spellcheck="false">
+  <input type="password" id="admParola" placeholder="Parola"
+         autocomplete="current-password">
+  <button id="girisBtn" onclick="giris()">Giriş</button>
 
   <div class="err" id="hata"></div>
 </div>
@@ -126,15 +113,7 @@ document.getElementById("admKod").addEventListener("keydown", e => {
   if (e.key === "Enter") document.getElementById("admParola").focus();
 });
 document.getElementById("admParola").addEventListener("keydown", e => { if (e.key === "Enter") giris(); });
-document.getElementById("sifre").addEventListener("keydown", e => { if (e.key === "Enter") ortakSifreGiris(); });
 
-// İki giriş kutusu arasında geçiş (geçiş dönemi için).
-function ortakSifreGoster(ac) {
-  document.getElementById("kisiGiris").style.display  = ac ? "none" : "";
-  document.getElementById("ortakGiris").style.display = ac ? "" : "none";
-  document.getElementById("hata").textContent = "";
-  document.getElementById(ac ? "sifre" : "admKod").focus();
-}
 
 // Kişisel giriş: kullanıcı adı + parola. Oturum kimin olduğunu biliyor.
 async function giris() {
@@ -162,33 +141,6 @@ async function giris() {
   } catch (e) {
     err.textContent = "Bağlantı kurulamadı.";
     parInp.value = ""; parInp.focus();
-  }
-  btn.disabled = false; btn.textContent = "Giriş";
-}
-
-// GEÇİŞ: ortak şifreyle giriş. İlk yönetici hesapları açılana kadar ZORUNLU
-// (hesap açmak için yönetici yetkisi gerekiyor). Sonra kapatılacak.
-async function ortakSifreGiris() {
-  const inp = document.getElementById("sifre"), btn = document.getElementById("ortakBtn"), err = document.getElementById("hata");
-  const d = inp.value.trim();
-  if (!d) return;
-  btn.disabled = true; btn.textContent = "..."; err.textContent = "";
-  try {
-    const g = await sifreIleGiris("admin_giris", d);
-    if (g.ok) {
-      GIRISLI = true;
-      YONETICI = null;               // ortak şifrede kimlik yok
-      sessionStorage.removeItem("gurok_admin_ad");
-      oturumDamgala("gurok_admin");
-      tokenKaydet("gurok_admin");
-      basla();
-    } else {
-      err.textContent = g.hata;      // kilitlenme / kapatıldı uyarısı buradan
-      inp.value = ""; inp.focus();
-    }
-  } catch (e) {
-    err.textContent = "Bağlantı kurulamadı.";
-    inp.value = ""; inp.focus();
   }
   btn.disabled = false; btn.textContent = "Giriş";
 }
@@ -231,8 +183,6 @@ async function cikisYap(sessiz) {
   document.getElementById("ana").style.display = "none";
   document.getElementById("kilit").style.display = "";
   document.getElementById("hata").textContent = "";
-  ortakSifreGoster(false);                 // kişisel giriş kutusuna dön
-  document.getElementById("sifre").value = "";
   document.getElementById("admParola").value = "";
 }
 
@@ -240,8 +190,7 @@ function basla() {
   document.getElementById("kilit").style.display = "none";
   document.getElementById("ana").style.display = "";
   document.getElementById("admKim").textContent = YONETICI ? ("👤 " + YONETICI.ad) : "";
-  // Ortak şifreyle girildiyse değiştirilecek kişisel parola yok.
-  document.getElementById("parolaBtn").style.display = YONETICI ? "" : "none";
+  document.getElementById("parolaBtn").style.display = "";
   dolduPickerlar();
 }
 
