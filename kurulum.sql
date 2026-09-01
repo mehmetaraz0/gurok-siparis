@@ -454,7 +454,11 @@ declare
   s_depo  text := 'BURAYA_' || 'DEPO_SIFRE';
   s_admin text := 'BURAYA_' || 'ADMIN_SIFRE';
 begin
-  if not exists (select 1 from public.ayarlar where anahtar = 'depo_sifre') then
+  -- Depo rolunde kullanici VARSA ortak sifrenin yoklugu KASITLIDIR: kisisel
+  -- hesaplara gecilmis ve o kapi kapatilmistir. Betik onu geri kurmaya
+  -- calismamali, yer tutucu yuzunden durmamali.
+  if not exists (select 1 from public.ayarlar where anahtar = 'depo_sifre')
+     and not exists (select 1 from public.kaptan where rol = 'depo') then
     if v_depo = s_depo then
       raise exception 'KURULUM DURDU: depo sifresi hala yer tutucu (%). kurulum.sql icinde gercek bir sifre yazip tekrar calistirin.', s_depo;
     end if;

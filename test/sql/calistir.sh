@@ -97,4 +97,25 @@ echo "### 4) Guvenlik testleri"
 calistir /tmp/guvenlik.sql 2>&1 | sed 's/^psql:[^ ]* //; s/^NOTICE:  //'
 
 echo
+echo "### 5) Ortak sifre KAPATILDIKTAN sonra kurulum.sql yine calisiyor mu"
+# 4. adimin sonunda guvenlik.sql ortak depo sifresini siliyor ve geride depo
+# rolunde kullanicilar birakiyor -- yani gercek gecis sonrasi durum. Yer tutucu
+# korumasi burada DEVREYE GIRMEMELI, yoksa kullanici bir daha kurulum.sql
+# calistiramaz.
+if ! calistir_sessiz /tmp/kurulum.sql >/dev/null 2>&1; then
+  echo "  ✗ BASARISIZ: gecis sonrasi kurulum.sql duruyor"
+  calistir_sessiz /tmp/kurulum.sql 2>&1 | grep -i error | head -3
+  exit 1
+fi
+echo "  ✓ calisti"
+# ve ortak sifreyi GERI KURMAMIS olmali
+kalan=$(docker exec "$KAP" psql -h 127.0.0.1 -U postgres -d gurok -At \
+  -c "select count(*) from ayarlar where anahtar='depo_sifre';")
+if [ "$kalan" != "0" ]; then
+  echo "  ✗ BASARISIZ: kapatilan ortak sifre geri kuruldu"
+  exit 1
+fi
+echo "  ✓ kapatilan ortak sifre geri kurulmadi"
+
+echo
 echo "TAMAM."
