@@ -226,6 +226,41 @@ async function sifreIleGiris(girisRpc, sifre) {
   } catch (e) { return { ok: false, hata: "Bağlantı kurulamadı." }; }
 }
 
+/* Kullanıcı adı + PIN ile giriş. Bar ve depo ekranları AYNI kapıyı kullanır
+   (kaptan_giris): kapı sayısı arttıkça deneme sayacını doğru beslemeyi
+   unutma riski artıyor — H-2'nin dersi buydu.
+
+   beklenenRol: bu ekranın kabul ettiği rol ("kaptan" | "depo"). Sunucu
+   oturumu role göre açtığı için yanlış ekrana giren kişi zaten hiçbir şey
+   yapamaz; ama "giriş oldu" görünüp sonra her işlemin sessizce reddedilmesi
+   kötü bir deneyim. Burada açıkça söylüyoruz.
+
+   Dönüş: { ok:true, kod, ad, departman, rol } | { ok:false, hata }        */
+async function kisiGirisi(kod, pin, beklenenRol) {
+  try {
+    const { data, error } = await SB.rpc("kaptan_giris", { p_kod: kod, p_pin: pin });
+    // Sunucu hatalı girişte exception atmaz, {ok:false, hata} döner (deneme
+    // sayacı commit olsun diye). error dolu ise gerçek bir bağlantı sorunu var.
+    if (error) return { ok: false, hata: "Bağlantı kurulamadı." };
+    if (!data || data.ok === false || !data.ad)
+      return { ok: false, hata: girisHatasiTr(data && data.hata, "Kullanıcı adı veya PIN hatalı.") };
+    if (!data.token) return { ok: false, hata: "Sunucu oturum açamadı." };
+
+    const rol = data.rol || "kaptan";
+    if (rol !== beklenenRol) {
+      // Oturum sunucuda açıldı ama bu ekrana ait değil: sahipsiz bırakma, kapat.
+      TOKEN = data.token;
+      await oturumuKapat();
+      return { ok: false, hata: rol === "depo"
+        ? "Bu bir DEPO hesabı. Depo ekranından girin."
+        : "Bu hesap depo personeline ait değil. Sipariş ekranından girin." };
+    }
+    TOKEN = data.token;
+    return { ok: true, kod: data.kod || kod, ad: data.ad,
+             departman: data.departman || "hepsi", rol: rol };
+  } catch (e) { return { ok: false, hata: "Bağlantı kurulamadı." }; }
+}
+
 // Token'ı sekme oturumunda sakla.
 function tokenKaydet(anahtar) {
   try {

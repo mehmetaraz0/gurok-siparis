@@ -15,9 +15,29 @@
 <!-- ===== Şifre ekranı ===== -->
 <div class="kilit" id="kilit">
   <h2>📦 DEPO TOPLAMA</h2>
-  <p>Devam etmek için depo şifresini girin</p>
-  <input type="password" id="sifre" placeholder="Şifre" autocomplete="current-password">
-  <button id="girisBtn" onclick="giris()">Giriş</button>
+
+  <!-- Kişisel giriş: sayaç kişi başına tutulduğu için biri yanlış PIN
+       denemeleriyle diğerlerini kilitleyemez (denetim N-1). -->
+  <div id="kisiGiris">
+    <p>Kullanıcı adınız ve PIN'iniz ile girin</p>
+    <input type="text" id="depoKod" placeholder="Kullanıcı adı"
+           autocomplete="username" autocapitalize="none" spellcheck="false">
+    <input type="password" id="depoPin" placeholder="PIN"
+           autocomplete="current-password" inputmode="numeric">
+    <button id="girisBtn" onclick="giris()">Giriş</button>
+    <button class="cb" onclick="ortakSifreGoster(true)">Ortak şifre ile gir</button>
+  </div>
+
+  <!-- GEÇİŞ: herkesin bildiği tek şifre. Personel kendi hesabına geçtikten
+       sonra bu bölüm kaldırılacak; sunucuda kapatmak tek satır:
+         delete from public.ayarlar where anahtar = 'depo_sifre'; -->
+  <div id="ortakGiris" style="display:none">
+    <p>Ortak depo şifresi<br><small>geçici — kişisel hesaba geçilince kapatılacak</small></p>
+    <input type="password" id="sifre" placeholder="Şifre" autocomplete="current-password">
+    <button id="ortakBtn" onclick="ortakSifreGiris()">Giriş</button>
+    <button class="cb" onclick="ortakSifreGoster(false)">← Kullanıcı adı ile gir</button>
+  </div>
+
   <div class="err" id="hata"></div>
 </div>
 
@@ -27,6 +47,7 @@
     <h1 id="hdrBaslik">DEPO — GELEN TALEPLER</h1>
     <div class="hr">
       <span class="canli"><i></i> Canlı</span>
+      <span id="depoKim" style="font-size:12px;opacity:.85"></span>
       <input type="date" id="tarih" onchange="yenile()">
       <button class="db" onclick="yenile()">🔄 Yenile</button>
       <button class="db" style="background:#555" onclick="cikisYap()">🚪 Çıkış</button>
@@ -175,6 +196,7 @@ function pdfjsBekle() {
 /* ================= Durum ================= */
 
 let GIRISLI = false;            // giriş yapıldı mı (oturum token'ı ortak.js'te TOKEN)
+let DEPOCU = null;              // kişisel girişte { kod, ad }; ortak şifrede null
 let SIPARISLER = [];            // seçili günün siparişleri (talepler ekranı)
 let ACIK_NO = null;             // detayı açık siparişin numarası (null ise liste ekranı)
 let STOK = null;                // stok listesi (null = henüz çekilmedi)
@@ -190,15 +212,75 @@ let zamanlayici = null;
 
 // Oturum YALNIZCA token ile sürer; şifre saklanmaz (M-1).
 sessionStorage.removeItem("gurok_depo_sifre");   // eski sürümden kalmışsa temizle
-if (tokenGeriYukle("gurok_depo")) { GIRISLI = true; basla(); }
+if (tokenGeriYukle("gurok_depo")) {
+  GIRISLI = true;
+  const ad = sessionStorage.getItem("gurok_depo_ad");
+  if (ad) DEPOCU = { kod: null, ad: ad };   // yenilemeden sonra da kim olduğu görünsün
+  basla();
+}
 
-document.getElementById("sifre").addEventListener("keydown", e => {
+document.getElementById("depoKod").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("depoPin").focus();
+});
+document.getElementById("depoPin").addEventListener("keydown", e => {
   if (e.key === "Enter") giris();
 });
+document.getElementById("sifre").addEventListener("keydown", e => {
+  if (e.key === "Enter") ortakSifreGiris();
+});
 
+// İki giriş kutusu arasında geçiş (geçiş dönemi için).
+function ortakSifreGoster(ac) {
+  document.getElementById("kisiGiris").style.display  = ac ? "none" : "";
+  document.getElementById("ortakGiris").style.display = ac ? "" : "none";
+  document.getElementById("hata").textContent = "";
+  document.getElementById(ac ? "sifre" : "depoKod").focus();
+}
+
+// Kişisel giriş: kullanıcı adı + PIN. Oturum artık KİMİN olduğunu biliyor.
 async function giris() {
-  const inp = document.getElementById("sifre");
+  const kodInp = document.getElementById("depoKod");
+  const pinInp = document.getElementById("depoPin");
   const btn = document.getElementById("girisBtn");
+  const err = document.getElementById("hata");
+  const kod = kodInp.value.trim();
+  const pin = pinInp.value.trim();
+  if (!kod) { err.textContent = "Kullanıcı adı girin."; kodInp.focus(); return; }
+  if (!pin) { err.textContent = "PIN girin."; pinInp.focus(); return; }
+
+  btn.disabled = true;
+  btn.textContent = "Kontrol ediliyor...";
+  err.textContent = "";
+  try {
+    const g = await kisiGirisi(kod, pin, "depo");
+    if (g.ok) {
+      GIRISLI = true;
+      DEPOCU = { kod: g.kod, ad: g.ad };
+      sessionStorage.setItem("gurok_depo_ad", g.ad);
+      oturumDamgala("gurok_depo");
+      tokenKaydet("gurok_depo");
+      kodInp.value = ""; pinInp.value = "";
+      basla();
+    } else {
+      err.textContent = g.hata;      // kilitlenme uyarısı da buradan gelir
+      pinInp.value = "";
+      pinInp.focus();
+    }
+  } catch (e) {
+    console.error(e);
+    err.textContent = "Bağlantı kurulamadı. İnternetinizi kontrol edin.";
+    pinInp.value = "";
+    pinInp.focus();
+  }
+  btn.disabled = false;
+  btn.textContent = "Giriş";
+}
+
+// GEÇİŞ: ortak şifreyle giriş. Kişisel hesaplara geçilince bu ve HTML'deki
+// #ortakGiris bloğu silinecek.
+async function ortakSifreGiris() {
+  const inp = document.getElementById("sifre");
+  const btn = document.getElementById("ortakBtn");
   const err = document.getElementById("hata");
   const deger = inp.value.trim();
   if (!deger) return;
@@ -211,11 +293,13 @@ async function giris() {
     const g = await sifreIleGiris("depo_giris", deger);
     if (g.ok) {
       GIRISLI = true;
+      DEPOCU = null;                 // ortak şifrede kimlik yok
+      sessionStorage.removeItem("gurok_depo_ad");
       oturumDamgala("gurok_depo");
       tokenKaydet("gurok_depo");
       basla();
     } else {
-      err.textContent = g.hata;      // kilitlenme uyarısı da buradan gelir
+      err.textContent = g.hata;      // kilitlenme / kapatıldı uyarısı buradan
       inp.value = "";
       inp.focus();
     }
@@ -239,19 +323,22 @@ async function cikisYap() {
   if (zamanlayici) { clearInterval(zamanlayici); zamanlayici = null; }
   await oturumuKapat();
   GIRISLI = false;
+  DEPOCU = null;
   ACIK_NO = null; ACIK_URUN = null; SIPARISLER = []; STOK = null;
-  ["gurok_depo_token", "gurok_depo_zaman", "gurok_depo_sifre"]
+  ["gurok_depo_token", "gurok_depo_zaman", "gurok_depo_sifre", "gurok_depo_ad"]
     .forEach(k => { try { sessionStorage.removeItem(k); } catch (e) {} });
   document.getElementById("ana").style.display = "none";
   document.getElementById("kilit").style.display = "";
   document.getElementById("hata").textContent = "";
-  const inp = document.getElementById("sifre");
-  inp.value = ""; inp.focus();
+  ortakSifreGoster(false);                 // kişisel giriş kutusuna dön
+  document.getElementById("sifre").value = "";
+  document.getElementById("depoPin").value = "";
 }
 
 function basla() {
   document.getElementById("kilit").style.display = "none";
   document.getElementById("ana").style.display = "";
+  document.getElementById("depoKim").textContent = DEPOCU ? ("👤 " + DEPOCU.ad) : "";
   document.getElementById("tarih").value = bugun();
   document.getElementById("envBas").value = bugun();
   document.getElementById("envBit").value = bugun();

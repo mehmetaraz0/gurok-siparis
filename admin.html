@@ -29,7 +29,7 @@
       <select id="listeSec" onchange="listeYukle()"></select>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="seedBaslat()">☁ Mevcut listeleri buluta yükle</button>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="pinYonetimiAc()">🔑 Outlet PIN'leri</button>
-      <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="kaptanPaneliAc()">🧑‍✈️ Kaptanlar</button>
+      <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="kaptanPaneliAc()">🧑‍✈️ Kullanıcılar</button>
       <button class="cb" style="width:auto;margin:0;padding:9px 14px" onclick="cikisYap()">🚪 Çıkış</button>
     </div>
   </div>
@@ -45,13 +45,14 @@
   <!-- ===== Kaptan yönetimi ===== -->
   <div id="kaptanPanel" style="display:none;padding:12px">
     <button class="geri" onclick="kaptanPaneliKapat()">← Liste düzenlemeye dön</button>
-    <div class="depo-header"><span>KAPTAN YÖNETİMİ</span><span class="depo-count" id="kaptanCount">—</span></div>
-    <p style="font-size:12px;color:#777;margin:8px 0">Kaptanlar bara bağlı değildir; kendi PIN'leriyle girip sipariş vereceği barı seçer. Depoda o siparişte <b>gönderen</b> olarak kaptanın adı görünür.</p>
+    <div class="depo-header"><span>KULLANICI YÖNETİMİ</span><span class="depo-count" id="kaptanCount">—</span></div>
+    <p style="font-size:12px;color:#777;margin:8px 0"><b>Kaptan:</b> bara bağlı değildir; kendi PIN'iyle girip sipariş vereceği birimi seçer. Depoda o siparişte <b>gönderen</b> olarak adı görünür.<br><b>Depo:</b> depo toplama ekranına girer. Herkesin bildiği ortak şifre yerine kişisel hesap kullanılması, birinin yanlış denemelerle tüm depoyu kilitlemesini de önler.</p>
     <div class="ekle-kutu">
-      <b>Kaptan ekle</b>
+      <b>Kullanıcı ekle</b>
       <input id="kAd" placeholder="Ad Soyad" oninput="kaptanKodGuncelle()">
       <input id="kKod" placeholder="kullanıcı adı (otomatik)" maxlength="10" oninput="this.dataset.elle='1'" autocapitalize="off">
       <input id="kPin" placeholder="PIN (en az 6 hane)" maxlength="12" inputmode="numeric">
+      <select id="kRol" title="Rol" onchange="kaptanRolFormGuncelle()"><option value="kaptan">Kaptan (sipariş)</option><option value="depo">Depo</option></select>
       <select id="kDep" title="Departman"><option value="bar">Bar</option><option value="mutfak">Mutfak</option><option value="hepsi">Hepsi</option></select>
       <button class="gb" onclick="kaptanEkle()">+ Ekle</button>
     </div>
@@ -441,35 +442,51 @@ async function kaptanListele() {
     if (error) throw error;
     const list = data || [];
     KAPTAN_KODLAR = new Set(list.map(k => k.kod));   // öneri çakışma kontrolü için
-    document.getElementById("kaptanCount").textContent = list.length + " kaptan";
+    document.getElementById("kaptanCount").textContent =
+      list.filter(k => (k.rol || "kaptan") === "kaptan").length + " kaptan · " +
+      list.filter(k => k.rol === "depo").length + " depo";
     const depSel = (kod, d) => {
       const o = (v, t) => '<option value="' + v + '"' + (d === v ? ' selected' : '') + '>' + t + '</option>';
       return '<select data-act="kdep" data-kod="' + htmlEsc(kod) + '">' +
         o("bar","Bar") + o("mutfak","Mutfak") + o("hepsi","Hepsi") + '</select>';
     };
+    const rolSel = (kod, r) => {
+      const o = (v, t) => '<option value="' + v + '"' + (r === v ? ' selected' : '') + '>' + t + '</option>';
+      return '<select data-act="krol" data-kod="' + htmlEsc(kod) + '">' +
+        o("kaptan","Kaptan") + o("depo","Depo") + '</select>';
+    };
     kutu.innerHTML = list.length
-      ? '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th>DEPARTMAN</th><th></th></tr></thead><tbody>' +
+      ? '<table class="adm-tbl"><thead><tr><th>KOD</th><th>AD</th><th>ROL</th><th>DEPARTMAN</th><th></th></tr></thead><tbody>' +
         list.map(k => '<tr><td><b>' + htmlEsc(k.kod) + '</b></td><td>' + htmlEsc(k.ad) + '</td>' +
-          '<td>' + depSel(k.kod, k.departman || "hepsi") + '</td>' +
+          '<td>' + rolSel(k.kod, k.rol || "kaptan") + '</td>' +
+          '<td>' + (k.rol === "depo" ? '<span class="em">—</span>' : depSel(k.kod, k.departman || "hepsi")) + '</td>' +
           '<td style="white-space:nowrap">' +
           '<button class="cb" style="width:auto;margin:0 6px 0 0;padding:6px 12px" data-act="ksifre" data-kod="' +
           htmlEsc(k.kod) + '">🔑 Şifre</button>' +
           '<button class="cb" style="width:auto;margin:0;padding:6px 12px" data-act="ksil" data-kod="' +
           htmlEsc(k.kod) + '">Sil</button></td></tr>').join("") + '</tbody></table>'
-      : '<div class="em">Henüz kaptan yok. Yukarıdan ekleyin.</div>';
+      : '<div class="em">Henüz kullanıcı yok. Yukarıdan ekleyin.</div>';
   } catch (e) { kutu.innerHTML = '<div class="em">⚠ ' + htmlEsc(e.message || "hata") + '</div>'; }
 }
+// Depo personeli birim seçmiyor; departman kutusu onlar için anlamsız.
+function kaptanRolFormGuncelle() {
+  const depo = document.getElementById("kRol").value === "depo";
+  document.getElementById("kDep").style.display = depo ? "none" : "";
+}
+
 async function kaptanEkle() {
   const kod = document.getElementById("kKod").value.trim();
   const ad = document.getElementById("kAd").value.trim();
   const pin = document.getElementById("kPin").value.trim();
   const dep = document.getElementById("kDep").value;
+  const rol = document.getElementById("kRol").value;
   if (!kod || !ad || !pin) { alert("Kod, ad ve PIN gerekli."); return; }
-  // Ayni kullanici adi varsa sunucu uzerine yazar (ad+PIN+departman degisir) — once sor.
+  // Ayni kullanici adi varsa sunucu uzerine yazar (ad+PIN+departman+rol degisir) — once sor.
   if (KAPTAN_KODLAR.has(kod.toLowerCase()) &&
-      !confirm(kod + " zaten kayitli. Devam ederseniz o kisinin adi, PIN'i ve departmani DEGISTIRILIR. Devam edilsin mi?")) return;
+      !confirm(kod + " zaten kayitli. Devam ederseniz o kisinin adi, PIN'i, departmani ve rolu DEGISTIRILIR. Devam edilsin mi?")) return;
   try {
-    const { error } = await SB.rpc("kaptan_ekle", { ...yetkiArg(), p_kod: kod, p_ad: ad, p_pin: pin, p_departman: dep });
+    const { error } = await SB.rpc("kaptan_ekle",
+      { ...yetkiArg(), p_kod: kod, p_ad: ad, p_pin: pin, p_departman: dep, p_rol: rol });
     if (error) throw error;
     document.getElementById("kAd").value = "";
     document.getElementById("kKod").value = "";
@@ -477,6 +494,16 @@ async function kaptanEkle() {
     document.getElementById("kPin").value = "";
     await kaptanListele();
   } catch (e) { alert("Eklenemedi: " + (e.message || "hata")); }
+}
+
+// Rol değişince sunucu o kişinin açık oturumlarını kapatıyor: eski oturum
+// artık yanlış ekrana ait olurdu.
+async function kaptanRolDegistir(kod, rol) {
+  try {
+    const { error } = await SB.rpc("kaptan_rol", { ...yetkiArg(), p_kod: kod, p_rol: rol });
+    if (error) throw error;
+    await kaptanListele();          // departman sütunu da değişiyor
+  } catch (e) { alert("Rol değiştirilemedi: " + (e.message || "hata")); await kaptanListele(); }
 }
 
 async function kaptanDepDegistir(kod, dep) {
@@ -598,8 +625,10 @@ document.addEventListener("click", e => {
   else if (t.dataset.act === "ksil")   kaptanSil(kod);
 });
 document.addEventListener("change", e => {
-  const t = e.target.closest('[data-act="kdep"]');
-  if (t) kaptanDepDegistir(t.dataset.kod, t.value);
+  const d = e.target.closest('[data-act="kdep"]');
+  if (d) { kaptanDepDegistir(d.dataset.kod, d.value); return; }
+  const r = e.target.closest('[data-act="krol"]');
+  if (r) kaptanRolDegistir(r.dataset.kod, r.value);
 });
 </script>
 </body>

@@ -113,22 +113,15 @@ async function kaptanGiris() {
   if (!kod) { err.textContent = "Kullanıcı adı girin."; return; }
   if (!pin) { err.textContent = "PIN girin."; return; }
   try {
-    const { data, error } = await SB.rpc("kaptan_giris", { p_kod: kod, p_pin: pin });
-    // Sunucu hatalı girişte exception atmaz, {ok:false, hata} döner (sayaç
-    // commit olsun diye). error dolu ise gerçekten bağlantı/sunucu sorunu var.
-    if (error) { err.textContent = "Kaptan veya PIN hatalı."; return; }
-    if (!data || data.ok === false || !data.ad) {
-      err.textContent = girisHatasiTr(data && data.hata, "Kullanıcı adı veya PIN hatalı.");
-      return;
-    }
-    if (!data.token) { err.textContent = "Sunucu oturum açamadı."; return; }
-    TOKEN = data.token;
+    // Rol kontrolü ortak: depo personeli buradan girerse açık mesaj alır.
+    const g = await kisiGirisi(kod, pin, "kaptan");
+    if (!g.ok) { err.textContent = g.hata; return; }
     // PIN nesnede TUTULMAZ: her istek token ile gidiyor (M-1).
-    KAPTAN = { kod: kod, ad: data.ad, departman: data.departman || "hepsi" };
+    KAPTAN = { kod: kod, ad: g.ad, departman: g.departman };
     sessionStorage.setItem("gurok_kaptan_kod", kod);
     sessionStorage.removeItem("gurok_kaptan_pin");   // eski sürümden kalmış olabilir
     tokenKaydet("gurok_kaptan");
-    sessionStorage.setItem("gurok_kaptan_ad", data.ad);
+    sessionStorage.setItem("gurok_kaptan_ad", g.ad);
     sessionStorage.setItem("gurok_kaptan_dep", KAPTAN.departman);
     oturumDamgala("gurok_kaptan");
     err.textContent = "";

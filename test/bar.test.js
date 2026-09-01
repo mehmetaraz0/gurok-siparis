@@ -48,6 +48,27 @@ console.log("=== 2. Kaptan girişi: kilitli hesap ===");
   ok("giriş yapılmadı", t.ev("KAPTAN") === null);
 }
 
+console.log("=== 2b. DEPO hesabıyla sipariş ekranına girilemez ===");
+{
+  // Sunucu oturumu role göre açtığı için depo hesabı buradan zaten hiçbir şey
+  // yapamaz; ama "giriş oldu" görünüp sonra her işlemin sessizce reddedilmesi
+  // kötü bir deneyim olurdu. Açık mesaj + açılan oturumu sunucuda kapat.
+  const t = barKur({ rpc: ad => ad === "kaptan_giris"
+    ? { data: { ok: true, kod: "depocu1", ad: "Depo Personeli", departman: "hepsi",
+                rol: "depo", token: "TKN_D" }, error: null }
+    : { data: { ok: true }, error: null } });
+  t.getEl("kaptanKod").value = "depocu1";
+  t.getEl("kaptanPin").value = "111111";
+  await t.ev("kaptanGiris()");
+  ok("giriş reddedildi", t.ev("KAPTAN") === null);
+  ok("açık mesaj verildi", /DEPO hesabı/.test(t.getEl("kaptanHata").textContent),
+      t.getEl("kaptanHata").textContent);
+  ok("açılan oturum sunucuda kapatıldı",
+      t.cagrilar.some(c => c.ad === "oturum_iptal" && c.arg.p_token === "TKN_D"),
+      JSON.stringify(t.cagrilar.map(c => c.ad)));
+  ok("TOKEN bırakılmadı", t.ev("TOKEN") === null);
+}
+
 console.log("=== 3. Sayfa yenileme: oturum token'dan geri geliyor ===");
 {
   const t = barKur({ oturum: ACIK_OTURUM() });

@@ -103,6 +103,17 @@ create table if not exists public.kaptan (
 alter table public.kaptan add column if not exists departman text not null default 'hepsi';
 alter table public.kaptan drop constraint if exists kaptan_departman_chk;
 alter table public.kaptan add constraint kaptan_departman_chk check (departman in ('bar','mutfak','hepsi'));
+-- Rol: bu kişi nereye giriyor.
+--   'kaptan' -> bar/mutfak sipariş ekranı (bar.html)
+--   'depo'   -> depo toplama ekranı (depo.html)
+-- Depo girişi eskiden HERKESİN kullandığı tek ortak şifreydi; sayaç kişi
+-- başına tutulamadığı için kilit de kapı başınaydı ve yabancı biri 5 yanlış
+-- denemeyle tüm depoyu 15 dakika dışarıda bırakabiliyordu (denetim N-1).
+-- Depo personeli de kendi kullanıcı adı + PIN'i ile girince sayaç kişiye
+-- bağlanıyor ve bu kapanıyor. Yan kazanç: oturum artık KİMİN olduğunu biliyor.
+alter table public.kaptan add column if not exists rol text not null default 'kaptan';
+alter table public.kaptan drop constraint if exists kaptan_rol_chk;
+alter table public.kaptan add constraint kaptan_rol_chk check (rol in ('kaptan','depo'));
 -- Girişte hep lower(kod) eşleştiği için kod da küçük harfe sabitlenir. Aksi halde
 -- 'Maraz' + 'maraz' iki ayrı satır olur, giriş hangisine düşeceği belirsizleşir.
 update public.kaptan set kod = lower(kod) where kod <> lower(kod);
@@ -143,7 +154,7 @@ $$;
 -- yazılacak bir şey yoktur.
 create or replace function public.kaptan_dogrula(p_kod text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_ad text; v_dep text; v_k text := lower(coalesce(p_kod,''));
+declare v_ad text; v_dep text; v_rol text; v_k text := lower(coalesce(p_kod,''));
 begin
   -- Kod hiç verilmemiş: sayaca yazılacak bir kimlik yok, boş kod satırı üretme.
   if v_k = '' then
@@ -155,7 +166,7 @@ begin
       'hata', 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.');
   end if;
 
-  select ad, departman into v_ad, v_dep from kaptan
+  select ad, departman, rol into v_ad, v_dep, v_rol from kaptan
    where lower(kod) = v_k and aktif
      and pin = extensions.crypt(coalesce(p_pin,''), pin);
 
@@ -164,7 +175,8 @@ begin
     return jsonb_build_object('ok', false, 'hata', 'Kullanici girisi gerekli');
   end if;
 
-  return jsonb_build_object('ok', true, 'ad', v_ad, 'departman', coalesce(v_dep,'hepsi'));
+  return jsonb_build_object('ok', true, 'ad', v_ad, 'departman', coalesce(v_dep,'hepsi'),
+    'rol', coalesce(v_rol,'kaptan'));
 end $$;
 
 -- Bir kaptan verilen birim türüne (bar/mutfak) yetkili mi?
@@ -224,6 +236,34 @@ begin
     'departman', coalesce(v_dep,'hepsi'));
 end $$;
 
+-- Bir KİŞİ oturumunu (kaptan ya da depo) kaptan satırına çözer.
+-- oturum_kaptan yalnızca tip='kaptan' bakar; depo rolündeki kişinin oturumu
+-- tip='depo' olduğu için oraya düşmez. Kendi PIN'ini değiştirme gibi
+-- "kim olduğun" yeten işlemler bunu kullanır.
+create or replace function public.oturum_kisi(p_token text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_kod text; v_ad text; v_dep text; v_rol text;
+begin
+  select k.kod, k.ad, k.departman, k.rol into v_kod, v_ad, v_dep, v_rol
+    from oturum o join kaptan k on lower(k.kod) = lower(o.ref)
+   where o.token_hash = encode(extensions.digest(coalesce(p_token,''), 'sha256'), 'hex')
+     and o.son_kullanma > now() and o.tip in ('kaptan','depo') and k.aktif;
+  if v_ad is null then
+    return jsonb_build_object('ok', false, 'hata', 'Oturum gecersiz veya suresi dolmus');
+  end if;
+  return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_ad,
+    'departman', coalesce(v_dep,'hepsi'), 'rol', coalesce(v_rol,'kaptan'));
+end $$;
+
+-- Bir kişinin TÜM oturumlarını kapatır (kaptan ve depo oturumları birlikte).
+-- PIN değişimi / silme sonrası tek tip kapatmak yetmez: kişi rol değiştirmiş
+-- olabilir ve eski tipte açık oturumu kalabilir.
+create or replace function public.oturum_kapat_kisi(p_kod text)
+returns void language sql security definer set search_path = public as $$
+  delete from oturum
+   where tip in ('kaptan','depo') and lower(coalesce(ref,'')) = lower(coalesce(p_kod,''));
+$$;
+
 create or replace function public.oturum_depo(p_token text)
 returns boolean language sql security definer set search_path = public, extensions as $$
   select exists (select 1 from oturum
@@ -271,6 +311,7 @@ drop function if exists public.stok_katalog_disi_sil(text, jsonb);
 drop function if exists public.stok_temizle(text);
 drop function if exists public.kaptan_liste(text);
 drop function if exists public.kaptan_ekle(text, text, text, text, text);
+drop function if exists public.kaptan_rol(text, text, text);
 drop function if exists public.kaptan_sil(text, text);
 drop function if exists public.kaptan_departman(text, text, text);
 drop function if exists public.kaptan_pin_degistir(text, text, text);
@@ -302,6 +343,16 @@ create or replace function public.depo_giris(p_sifre text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   delete from kaptan_deneme where zaman < now() - interval '1 day';
+  -- GEÇİŞ: ortak depo şifresi. Depo personeli kendi kullanıcı adı + PIN'ine
+  -- geçtikten sonra bu kapı KAPATILMALI -- tek adım:
+  --     delete from public.ayarlar where anahtar = 'depo_sifre';
+  -- Kapanana kadar N-1 açık kalır: sayaç '#depo' anahtarında GLOBAL olduğu
+  -- için yabancı biri 5 yanlış denemeyle tüm depoyu 15 dakika kilitleyebilir.
+  -- Kullanıcı adı + PIN girişinde sayaç kişiye bağlı olduğu için bu sorun yok.
+  if not exists (select 1 from ayarlar where anahtar = 'depo_sifre') then
+    return jsonb_build_object('ok', false,
+      'hata', 'Ortak depo sifresi kapatildi. Kullanici adi ve PIN ile girin.');
+  end if;
   if kaptan_kilitli('#depo') then
     return jsonb_build_object('ok', false,
       'hata', 'Cok fazla hatali deneme. 15 dakika sonra tekrar deneyin.');
@@ -1205,7 +1256,7 @@ drop function if exists public.kaptan_liste_ac();
 -- rollback olur ve brute-force engeli hiç çalışmaz.
 create or replace function public.kaptan_giris(p_kod text, p_pin text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
-declare v_kod text; v_kimlik jsonb; v_k text := lower(coalesce(p_kod,''));
+declare v_kod text; v_kimlik jsonb; v_rol text; v_k text := lower(coalesce(p_kod,''));
 begin
   -- Eski kayıtları temizle (tablo şişmesin)
   delete from kaptan_deneme where zaman < now() - interval '1 day';
@@ -1222,9 +1273,16 @@ begin
 
   select kod into v_kod from kaptan where lower(kod) = v_k;
   delete from kaptan_deneme where kod = v_k;      -- başarılı giriş sayacı sıfırlar
+
+  -- Oturumun TİPİ role göre açılır. Böylece depo rolündeki kişinin token'ı
+  -- oturum_depo()'dan geçer ve ~20 depo RPC'sinin hiçbiri değişmez; kaptan
+  -- rolündeki kişinin token'ı ise depo RPC'lerinden geçmez. Yanlış ekrana
+  -- giren kişi giriş yapmış görünüp sonra sessizce reddedilmesin diye 'rol'
+  -- yanıtta da dönüyor; ekranlar buna bakıp açık mesaj veriyor.
+  v_rol := coalesce(v_kimlik->>'rol', 'kaptan');
   return jsonb_build_object('ok', true, 'kod', v_kod, 'ad', v_kimlik->>'ad',
-    'departman', v_kimlik->>'departman',
-    'token', oturum_ac('kaptan', v_kod));
+    'departman', v_kimlik->>'departman', 'rol', v_rol,
+    'token', oturum_ac(case when v_rol = 'depo' then 'depo' else 'kaptan' end, v_kod));
 end $$;
 
 -- Admin: kaptan listesi (PIN yok)
@@ -1232,25 +1290,50 @@ create or replace function public.kaptan_liste(p_token text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
-  return coalesce((select jsonb_agg(jsonb_build_object('kod', kod, 'ad', ad, 'aktif', aktif, 'departman', departman) order by ad)
+  return coalesce((select jsonb_agg(jsonb_build_object('kod', kod, 'ad', ad, 'aktif', aktif,
+                                    'departman', departman, 'rol', coalesce(rol,'kaptan')) order by ad)
     from kaptan), '[]'::jsonb);
 end $$;
 
 -- Admin: kaptan ekle/güncelle (departman ile)
 drop function if exists public.kaptan_ekle(text, text, text, text);
-create or replace function public.kaptan_ekle(p_token text, p_kod text, p_ad text, p_pin text, p_departman text default 'hepsi')
+create or replace function public.kaptan_ekle(p_token text, p_kod text, p_ad text, p_pin text,
+                                              p_departman text default 'hepsi',
+                                              p_rol text default 'kaptan')
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_dep text := coalesce(nullif(p_departman,''),'hepsi');
+        v_rol text := coalesce(nullif(p_rol,''),'kaptan');
 begin
   if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
   if coalesce(p_kod,'') !~ '^[A-Za-z0-9]{1,10}$' then raise exception 'Kod 1-10 harf/rakam olmali'; end if;
   if coalesce(p_ad,'') = '' then raise exception 'Ad bos olamaz'; end if;
   if coalesce(p_pin,'') !~ '^[0-9]{6,12}$' then raise exception 'PIN en az 6 haneli sayi olmali'; end if;
+  if v_rol not in ('kaptan','depo') then raise exception 'Gecersiz rol'; end if;
+  -- Depo personeli birim seçmiyor; departman onlar için anlamsız.
+  if v_rol = 'depo' then v_dep := 'hepsi'; end if;
   if v_dep not in ('bar','mutfak','hepsi') then raise exception 'Gecersiz departman'; end if;
   -- kod küçük harfe normalize edilir (giriş kasadan bağımsız çalışsın)
-  insert into kaptan (kod, ad, pin, aktif, departman)
-  values (lower(p_kod), left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf', 10)), true, v_dep)
-  on conflict (kod) do update set ad = excluded.ad, pin = excluded.pin, aktif = true, departman = excluded.departman;
+  insert into kaptan (kod, ad, pin, aktif, departman, rol)
+  values (lower(p_kod), left(p_ad,60), extensions.crypt(p_pin, extensions.gen_salt('bf', 10)), true, v_dep, v_rol)
+  on conflict (kod) do update set ad = excluded.ad, pin = excluded.pin, aktif = true,
+                                  departman = excluded.departman, rol = excluded.rol;
+  -- Rol/PIN değişmiş olabilir: açık oturumlar kapansın, yeni kimlikle girsin.
+  perform oturum_kapat_kisi(p_kod);
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Rolü tek başına değiştirmek (kişiyi silip yeniden eklemeden).
+create or replace function public.kaptan_rol(p_token text, p_kod text, p_rol text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
+  if coalesce(p_rol,'') not in ('kaptan','depo') then raise exception 'Gecersiz rol'; end if;
+  update kaptan set rol = p_rol,
+                    departman = case when p_rol = 'depo' then 'hepsi' else departman end
+   where lower(kod) = lower(coalesce(p_kod,''));
+  if not found then raise exception 'Kullanici bulunamadi'; end if;
+  -- Rol değişti: eski tipteki oturumu artık yanlış ekrana ait, kapat.
+  perform oturum_kapat_kisi(p_kod);
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -1259,7 +1342,7 @@ create or replace function public.kaptan_sil(p_token text, p_kod text)
 returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not oturum_admin(p_token) then raise exception 'Oturum gecersiz veya suresi dolmus'; end if;
-  perform oturum_kapat_tumu('kaptan', p_kod);   -- silinen kaptanın oturumları kapanır
+  perform oturum_kapat_kisi(p_kod);             -- silinen kişinin oturumları kapanır
   delete from kaptan where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kaptan bulunamadi'; end if;
   return jsonb_build_object('ok', true);
@@ -1285,7 +1368,7 @@ begin
   update kaptan set pin = extensions.crypt(p_pin, extensions.gen_salt('bf', 10))
    where lower(kod) = lower(coalesce(p_kod,''));
   if not found then raise exception 'Kaptan bulunamadi'; end if;
-  perform oturum_kapat_tumu('kaptan', p_kod);   -- admin sıfırladı: oturumlar kapanır
+  perform oturum_kapat_kisi(p_kod);             -- admin sıfırladı: oturumlar kapanır
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -1297,7 +1380,9 @@ begin
   if coalesce(p_yeni_pin,'') !~ '^[0-9]{6,12}$' then raise exception 'Yeni PIN en az 6 haneli sayi olmali'; end if;
   -- Kimlik OTURUMDAN gelir; ek olarak eski PIN sorulur (açık oturumu ele
   -- geçiren PIN değiştirip hesabı devralamasın).
-  v_kimlik := oturum_kaptan(p_token);
+  -- oturum_kisi: kaptan VE depo oturumlarını çözer. oturum_kaptan yalnızca
+  -- tip='kaptan' bakıyor; depo rolündeki kişi kendi PIN'ini değiştiremezdi.
+  v_kimlik := oturum_kisi(p_token);
   if not (v_kimlik->>'ok')::boolean then return v_kimlik; end if;
   v_kod := v_kimlik->>'kod';
   if not exists (select 1 from kaptan where lower(kod) = lower(v_kod)
@@ -1307,7 +1392,7 @@ begin
   update kaptan set pin = extensions.crypt(p_yeni_pin, extensions.gen_salt('bf', 10))
    where lower(kod) = lower(v_kod);
   -- PIN değişti: bu kaptanın TÜM oturumları kapanır (çalınmış token dahil)
-  perform oturum_kapat_tumu('kaptan', v_kod);
+  perform oturum_kapat_kisi(v_kod);
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -1458,7 +1543,8 @@ grant execute on function public.admin_giris(text)                              
 grant execute on function public.oturum_iptal(text)                                   to anon;
 grant execute on function public.kaptan_giris(text, text)                             to anon;
 grant execute on function public.kaptan_liste(text)                                   to anon;
-grant execute on function public.kaptan_ekle(text, text, text, text, text)            to anon;
+grant execute on function public.kaptan_ekle(text, text, text, text, text, text)      to anon;
+grant execute on function public.kaptan_rol(text, text, text)                         to anon;
 grant execute on function public.kaptan_sil(text, text)                               to anon;
 grant execute on function public.kaptan_departman(text, text, text)                   to anon;
 grant execute on function public.kaptan_pin_degistir(text, text, text)                to anon;
