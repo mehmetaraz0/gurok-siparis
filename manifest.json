@@ -1,0 +1,17 @@
+{
+  "name": "GUROK Sipariş Sistemi",
+  "short_name": "GUROK",
+  "description": "Ali Bey Club Manavgat için dijital sipariş ve depo sistemi",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#24322f",
+  "theme_color": "#24322f",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icons/dornevi-any-192-v2.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/dornevi-any-512-v2.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/dornevi-maskable-192-v2.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/dornevi-maskable-512-v2.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
